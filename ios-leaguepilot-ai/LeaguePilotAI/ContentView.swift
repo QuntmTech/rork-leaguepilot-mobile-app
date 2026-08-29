@@ -23,7 +23,7 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .ready:
-                HomeView(session: session)
+                AuthenticatedShell(session: session)
             case .signedOut, .authenticating:
                 SignInView(session: session)
             case let .failed(message):

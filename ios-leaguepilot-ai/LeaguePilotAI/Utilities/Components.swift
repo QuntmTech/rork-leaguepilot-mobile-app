@@ -1,5 +1,20 @@
 import SwiftUI
 
+struct LPEmptyState: View {
+    let systemImage: String
+    let title: String
+    let message: String
+    var body: some View { VStack(spacing: 12) { Image(systemName: systemImage).font(.system(size: 24, weight: .semibold)).foregroundStyle(Theme.emerald).frame(width: 52, height: 52).background(Theme.lime.opacity(0.25)).clipShape(Circle()); Text(title).font(.headline).foregroundStyle(Theme.ink); Text(message).font(.subheadline).foregroundStyle(Theme.inkSecondary).multilineTextAlignment(.center) }.frame(maxWidth: .infinity).padding(.vertical, 28).leagueCard() }
+}
+
+struct LPStatusPill: View {
+    enum Kind { case connected, warning, error, neutral }
+    let text: String
+    let systemImage: String
+    var kind: Kind = .neutral
+    var body: some View { Label(text, systemImage: systemImage).font(.caption.weight(.semibold)).foregroundStyle(kind == .connected ? Theme.emerald : kind == .error ? Theme.clay : Theme.inkSecondary).padding(.horizontal, 10).frame(minHeight: 28).background((kind == .connected ? Theme.emerald : kind == .error ? Theme.clay : Theme.border).opacity(0.14)).clipShape(Capsule()) }
+}
+
 /// Card container shared across screens.
 struct CardBackground: ViewModifier {
     func body(content: Content) -> some View {
