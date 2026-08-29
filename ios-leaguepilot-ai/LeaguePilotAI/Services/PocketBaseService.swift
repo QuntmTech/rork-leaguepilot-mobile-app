@@ -8,8 +8,9 @@ protocol PocketBaseServicing {
     func connections(workspaceID: String, token: String) async throws -> [ESPNConnection]
     func jobs(workspaceID: String, connectionID: String, token: String) async throws -> [AnalysisJob]
     func job(id: String, token: String) async throws -> AnalysisJob
-    func snapshots(workspaceID: String, token: String) async throws -> [LeagueSnapshotReference]
+    func snapshots(workspaceID: String, token: String) async throws -> [LeagueSnapshotRecord]
     func recommendations(workspaceID: String, token: String) async throws -> [Recommendation]
+    func reports(workspaceID: String, token: String) async throws -> [WeeklyReport]
 }
 
 @MainActor
@@ -43,12 +44,16 @@ final class PocketBaseService: PocketBaseServicing {
         try await client.send(AnalysisJob.self, method: "GET", path: "/api/collections/\(LeaguePilotConfig.jobsCollection)/records/\(id)", token: token)
     }
 
-    func snapshots(workspaceID: String, token: String) async throws -> [LeagueSnapshotReference] {
-        try await list(LeagueSnapshotReference.self, collection: LeaguePilotConfig.snapshotsCollection, filter: "workspace = \(PBFilter.value(workspaceID))", sort: "-created", token: token, limit: 100)
+    func snapshots(workspaceID: String, token: String) async throws -> [LeagueSnapshotRecord] {
+        try await list(LeagueSnapshotRecord.self, collection: LeaguePilotConfig.snapshotsCollection, filter: "workspace = \(PBFilter.value(workspaceID))", sort: "-fetched_at", token: token, limit: 100)
     }
 
     func recommendations(workspaceID: String, token: String) async throws -> [Recommendation] {
         try await list(Recommendation.self, collection: LeaguePilotConfig.recommendationsCollection, filter: "workspace = \(PBFilter.value(workspaceID))", sort: "-created", token: token, limit: 100)
+    }
+
+    func reports(workspaceID: String, token: String) async throws -> [WeeklyReport] {
+        try await list(WeeklyReport.self, collection: LeaguePilotConfig.reportsCollection, filter: "workspace = \(PBFilter.value(workspaceID))", sort: "-published_at,-created", token: token, limit: 100)
     }
 
     private func list<T: Decodable>(_ type: T.Type, collection: String, filter: String, sort: String, token: String, limit: Int = 50) async throws -> [T] {

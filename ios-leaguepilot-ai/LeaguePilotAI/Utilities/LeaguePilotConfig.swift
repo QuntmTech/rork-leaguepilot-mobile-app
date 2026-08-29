@@ -8,6 +8,7 @@ enum LeaguePilotConfig {
     static let jobsCollection = "job_runs"
     static let recommendationsCollection = "recommendations"
     static let snapshotsCollection = "league_snapshots"
+    static let reportsCollection = "reports"
     static let defaultSeason = "2026"
 
     static var baseURL: URL {

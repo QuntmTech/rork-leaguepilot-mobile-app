@@ -6,17 +6,25 @@ struct AuthenticatedShell: View {
     let session: SessionStore
     @State private var tab: Tab = .home
 
-    enum Tab: String, CaseIterable, Identifiable { case home, moves, league, alerts, settings
+    enum Tab: String, CaseIterable, Identifiable {
+        case home, moves, league, alerts, settings
         var id: String { rawValue }
-        var title: String { rawValue.capitalized }
-        var symbol: String { switch self { case .home: "house"; case .moves: "bolt.horizontal.circle"; case .league: "shield"; case .alerts: "bell"; case .settings: "gearshape" } }
+        var symbol: String {
+            switch self {
+            case .home: "house"
+            case .moves: "bolt.horizontal.circle"
+            case .league: "shield"
+            case .alerts: "bell"
+            case .settings: "gearshape"
+            }
+        }
     }
 
     var body: some View {
         TabView(selection: $tab) {
             HomeView(session: session).tabItem { Label("Home", systemImage: Tab.home.symbol) }.tag(Tab.home)
             MovesView(session: session).tabItem { Label("Moves", systemImage: Tab.moves.symbol) }.tag(Tab.moves)
-            LeagueView(session: session).tabItem { Label("League", systemImage: Tab.league.symbol) }.tag(Tab.league)
+            LeagueIntelligenceView(session: session).tabItem { Label("League", systemImage: Tab.league.symbol) }.tag(Tab.league)
             AlertsView().tabItem { Label("Alerts", systemImage: Tab.alerts.symbol) }.tag(Tab.alerts)
             SettingsView(session: session).tabItem { Label("Settings", systemImage: Tab.settings.symbol) }.tag(Tab.settings)
         }
@@ -28,46 +36,105 @@ private struct MovesView: View {
     let session: SessionStore
     @State private var recommendations: [Recommendation] = []
     @State private var error: String?
+    @State private var hasLoaded = false
+
     var body: some View {
-        NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 16) {
-            Text("Moves").font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
-            Text(session.selectedConnection?.displayName ?? "Select a league on Home").font(.subheadline).foregroundStyle(Theme.inkSecondary)
-            if let error { Text(error).foregroundStyle(Theme.clay).leagueCard() }
-            else if recommendations.isEmpty { LPEmptyState(systemImage: "sparkles", title: "No moves to review", message: "Run a completed analysis for the selected league to load verified lineup, waiver, and trade guidance.") }
-            else { ForEach(recommendations) { item in
-                NavigationLink {
-                    RecommendationDetailView(session: session, recommendation: item) { id, status in
-                        guard let index = recommendations.firstIndex(where: { $0.id == id }) else { return }
-                        recommendations[index] = recommendations[index].updating(status: status)
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    Text("Moves").font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text(session.selectedConnection?.displayName ?? "Select a league on Home").font(.subheadline).foregroundStyle(Theme.inkSecondary)
+                    if let error {
+                        Text(error).foregroundStyle(Theme.clay).padding(16).leagueCard()
+                    } else if hasLoaded, recommendations.isEmpty {
+                        LPEmptyState(systemImage: "sparkles", title: "No moves to review", message: "Run a completed analysis for the selected league to load verified lineup, waiver, and trade guidance.")
+                    } else if !hasLoaded {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 36)
+                    } else {
+                        ForEach(recommendations) { item in
+                            NavigationLink {
+                                RecommendationDetailView(session: session, recommendation: item) { id, status in
+                                    guard let index = recommendations.firstIndex(where: { $0.id == id }) else { return }
+                                    recommendations[index] = recommendations[index].updating(status: status)
+                                }
+                            } label: {
+                                recommendationRow(item)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack { Label(item.kind.capitalized, systemImage: "sparkles").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald); Spacer(); LPStatusPill(text: item.status.rawValue.capitalized, systemImage: item.status == .proposed ? "clock" : "checkmark.circle", kind: item.status == .approved ? .connected : .neutral) }
-                        Text(item.title).font(.headline).foregroundStyle(Theme.ink)
-                        Text(item.summary).font(.subheadline).foregroundStyle(Theme.inkSecondary).lineLimit(4)
-                        if let confidence = item.confidenceLabel { Text(confidence).font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }
-                    }.padding(16).leagueCard()
-                }.buttonStyle(.plain)
-            } }
-        }.padding(16) }.background(Theme.canvas).navigationTitle("Moves").task { do { recommendations = try await session.loadRecommendations() } catch { self.error = FriendlyError.message(for: error) } } }
+                }
+                .padding(16)
+            }
+            .background(Theme.canvas)
+            .navigationTitle("Moves")
+            .task(id: loadID) { await load(connectionID: session.selectedConnectionID) }
+            .onChange(of: session.selectedConnectionID) { _, _ in
+                // Clear synchronously, before the replacement task gets a chance to fetch.
+                // Its task identity then cancels the old request and loads the new league.
+                recommendations = []
+                error = nil
+                hasLoaded = false
+            }
+        }
+    }
+
+    private var loadID: String { "\(session.selectedConnectionID ?? "none")-\(session.realtimeRevision)" }
+
+    private func recommendationRow(_ item: Recommendation) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(item.kind.capitalized, systemImage: "sparkles").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald)
+                Spacer()
+                LPStatusPill(text: item.status.rawValue.capitalized, systemImage: item.status == .proposed ? "clock" : "checkmark.circle", kind: item.status == .approved ? .connected : .neutral)
+            }
+            Text(item.title).font(.headline).foregroundStyle(Theme.ink)
+            Text(item.summary).font(.subheadline).foregroundStyle(Theme.inkSecondary).lineLimit(4)
+            if let confidence = item.confidenceLabel { Text(confidence).font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }
+        }
+        .padding(16)
+        .leagueCard()
+    }
+
+    /// SwiftUI cancels this task for a changed id; the explicit id guard also prevents a
+    /// non-cooperative network response from the previous league from touching visible state.
+    private func load(connectionID: String?) async {
+        recommendations = []
+        error = nil
+        hasLoaded = false
+        guard let connectionID else {
+            hasLoaded = true
+            return
+        }
+        do {
+            let results = try await session.loadRecommendations(for: connectionID)
+            guard !Task.isCancelled, session.selectedConnectionID == connectionID else { return }
+            recommendations = results
+        } catch {
+            guard !Task.isCancelled, session.selectedConnectionID == connectionID else { return }
+            self.error = FriendlyError.message(for: error)
+        }
+        if !Task.isCancelled, session.selectedConnectionID == connectionID { hasLoaded = true }
     }
 }
 
-private struct LeagueView: View {
-    let session: SessionStore
-    var body: some View { NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 16) {
-        Text("My League").font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
-        if let connection = session.selectedConnection { VStack(alignment: .leading, spacing: 10) { Text(connection.displayName).font(.headline); Text("Season \(connection.season) · Team \(connection.teamID)").foregroundStyle(Theme.inkSecondary); LPStatusPill(text: connection.status.label, systemImage: connection.status == .connected ? "checkmark.circle" : "exclamationmark.triangle", kind: connection.status == .connected ? .connected : .warning); if let last = connection.lastSyncedAt { Text("Last sync \(RelativeTime.string(from: last))").font(.caption).foregroundStyle(Theme.inkSecondary) } }.padding(16).leagueCard() } else { LPEmptyState(systemImage: "shield", title: "No league selected", message: "Connect an ESPN league from Home to load its verified roster and matchup data.") }
-        LPEmptyState(systemImage: "chart.bar", title: "League intelligence awaits a sync", message: "Standings, roster strength, and matchup details appear only when a completed backend snapshot supplies them.")
-    }.padding(16) }.background(Theme.canvas).navigationTitle("League") } }
-}
-
 private struct AlertsView: View {
-    var body: some View { NavigationStack { VStack(spacing: 16) { LPEmptyState(systemImage: "bell.badge", title: "Alerts are coming later", message: "Cross-device read state and device registration require an approved backend notification endpoint. No local alert state is being fabricated.") }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.canvas).navigationTitle("Alerts") } }
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                LPEmptyState(systemImage: "bell.badge", title: "Alerts are coming later", message: "Cross-device read state and device registration require an approved backend notification endpoint. No local alert state is being fabricated.")
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.canvas)
+            .navigationTitle("Alerts")
+        }
+    }
 }
 
 private struct SettingsView: View {
     let session: SessionStore
+
     var body: some View {
         NavigationStack {
             List {
@@ -78,7 +145,8 @@ private struct SettingsView: View {
                 Section("Connected leagues") { Text("\(session.activeConnections.count) active") }
                 Section("Safety") { Text("Read-only ESPN access. LEAGUEPILOT AI never submits moves to ESPN.").font(.footnote) }
                 Section { Button("Sign Out", role: .destructive) { session.signOut() } }
-            }.navigationTitle("Settings")
+            }
+            .navigationTitle("Settings")
         }
     }
 }

@@ -334,6 +334,11 @@ extension JSONValue {
         guard case let .object(values) = self else { return nil }
         return values[key]
     }
+
+    func decode<T: Decodable>(_ type: T.Type) -> T? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
 }
 
 struct Recommendation: Decodable, Identifiable, Equatable {
@@ -384,11 +389,199 @@ struct Recommendation: Decodable, Identifiable, Equatable {
     }
 }
 
-struct LeagueSnapshotReference: Decodable, Identifiable, Equatable {
+// MARK: - League intelligence
+
+struct LeaguePlayer: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let position: String
+    let proTeam: String
+    let projectedPoints: Double
+    let seasonPoints: Double
+    let averagePoints: Double
+    let injuryStatus: String
+    let currentSlot: String
+    let eligibleSlots: [String]
+    let opponent: String
+    let percentOwned: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, position, opponent
+        case proTeam = "pro_team"
+        case projectedPoints = "projected_points"
+        case seasonPoints = "season_points"
+        case averagePoints = "average_points"
+        case injuryStatus = "injury_status"
+        case currentSlot = "current_slot"
+        case eligibleSlots = "eligible_slots"
+        case percentOwned = "percent_owned"
+    }
+
+    var isStarter: Bool { currentSlot != "BE" && currentSlot != "IR" }
+    var projectedPointsLabel: String? { projectedPoints > 0 ? String(format: "%.1f proj", projectedPoints) : nil }
+}
+
+struct LeagueTeam: Decodable, Identifiable, Equatable {
+    let id: Int
+    let name: String
+    let owner: String
+    let wins: Int
+    let losses: Int
+    let ties: Int
+    let pointsFor: Double
+    let projectedTotal: Double
+    let roster: [LeaguePlayer]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, owner, wins, losses, ties, roster
+        case pointsFor = "points_for"
+        case projectedTotal = "projected_total"
+    }
+
+    var record: String { ties > 0 ? "\(wins)-\(losses)-\(ties)" : "\(wins)-\(losses)" }
+    var starters: [LeaguePlayer] { roster.filter(\.isStarter) }
+    var bench: [LeaguePlayer] { roster.filter { !$0.isStarter } }
+}
+
+struct LeagueMatchup: Decodable, Identifiable, Equatable {
+    let week: Int
+    let homeTeamID: Int
+    let awayTeamID: Int
+    let homeScore: Double
+    let awayScore: Double
+    let homeProjected: Double
+    let awayProjected: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case week
+        case homeTeamID = "home_team_id"
+        case awayTeamID = "away_team_id"
+        case homeScore = "home_score"
+        case awayScore = "away_score"
+        case homeProjected = "home_projected"
+        case awayProjected = "away_projected"
+    }
+
+    var id: String { "\(week)-\(homeTeamID)-\(awayTeamID)" }
+
+    func opponentID(for teamID: Int) -> Int? {
+        homeTeamID == teamID ? awayTeamID : awayTeamID == teamID ? homeTeamID : nil
+    }
+
+    func projectedTotal(for teamID: Int) -> Double? {
+        homeTeamID == teamID ? homeProjected : awayTeamID == teamID ? awayProjected : nil
+    }
+
+    func score(for teamID: Int) -> Double? {
+        homeTeamID == teamID ? homeScore : awayTeamID == teamID ? awayScore : nil
+    }
+}
+
+struct LeagueSnapshotPayload: Decodable, Equatable {
+    let leagueID: Int
+    let leagueName: String
+    let season: Int
+    let week: Int
+    let scoringFormat: String
+    let myTeamID: Int
+    let rosterSlots: [String]
+    let teams: [LeagueTeam]
+    let freeAgents: [LeaguePlayer]
+    let matchups: [LeagueMatchup]
+    let dataQualityWarnings: [String]
+    let fetchedAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case season, week, teams, matchups
+        case leagueID = "league_id"
+        case leagueName = "league_name"
+        case scoringFormat = "scoring_format"
+        case myTeamID = "my_team_id"
+        case rosterSlots = "roster_slots"
+        case freeAgents = "free_agents"
+        case dataQualityWarnings = "data_quality_warnings"
+        case fetchedAt = "fetched_at"
+    }
+
+    var myTeam: LeagueTeam? { teams.first { $0.id == myTeamID } }
+    var currentMatchup: LeagueMatchup? { matchups.first { $0.week == week && $0.opponentID(for: myTeamID) != nil } }
+    var currentOpponent: LeagueTeam? {
+        guard let opponentID = currentMatchup?.opponentID(for: myTeamID) else { return nil }
+        return teams.first { $0.id == opponentID }
+    }
+}
+
+struct LeagueSnapshotRecord: Decodable, Identifiable, Equatable {
     let id: String
     let workspace: String
-    let connection: String
+    let connection: String?
+    let week: Int
+    let payload: LeagueSnapshotPayload
+    let fetchedAt: String
+    let expiresAt: String?
     let created: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, workspace, connection, week, payload, created
+        case fetchedAt = "fetched_at"
+        case expiresAt = "expires_at"
+    }
+}
+
+struct PowerRanking: Decodable, Identifiable, Equatable {
+    let teamID: Int
+    let team: String
+    let score: Double
+    let recordScore: Double
+    let pointsScore: Double
+    let projectionScore: Double
+    let projectedTotal: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case team, score
+        case teamID = "team_id"
+        case recordScore = "record_score"
+        case pointsScore = "points_score"
+        case projectionScore = "projection_score"
+        case projectedTotal = "projected_total"
+    }
+
+    var id: Int { teamID }
+}
+
+struct WeeklyReport: Decodable, Identifiable, Equatable {
+    let id: String
+    let workspace: String
+    let snapshot: String?
+    let week: Int
+    let title: String
+    let bodyMarkdown: String
+    let metrics: JSONValue
+    let narrationMode: String
+    let publishedAt: String?
+    let created: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, workspace, snapshot, week, title, metrics, created
+        case bodyMarkdown = "body_markdown"
+        case narrationMode = "narration_mode"
+        case publishedAt = "published_at"
+    }
+
+    var powerRankings: [PowerRanking] { metrics["power_rankings"]?.decode([PowerRanking].self) ?? [] }
+}
+
+struct SelectedLeagueData: Equatable {
+    let connectionID: String
+    let snapshot: LeagueSnapshotRecord?
+    let recommendations: [Recommendation]
+    let reports: [WeeklyReport]
+    let jobs: [AnalysisJob]
+
+    var powerRankings: [PowerRanking] {
+        guard let snapshot else { return [] }
+        return reports.first(where: { $0.snapshot == snapshot.id })?.powerRankings ?? []
+    }
 }
 
 // MARK: - Account creation

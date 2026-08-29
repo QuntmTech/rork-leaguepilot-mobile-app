@@ -1,6 +1,8 @@
 name: iOS
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths: ["ios-leaguepilot-ai/**", ".github/workflows/ios.yml"]
   workflow_dispatch:
