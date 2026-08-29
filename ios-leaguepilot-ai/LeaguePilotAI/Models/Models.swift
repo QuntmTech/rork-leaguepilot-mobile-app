@@ -260,6 +260,26 @@ enum RecommendationStatus: String, Codable, CaseIterable, Equatable {
     case expired
 }
 
+enum RecommendationDecision: String, Encodable, Equatable {
+    case approved
+    case dismissed
+}
+
+struct RecommendationReviewRequest: Encodable, Equatable {
+    let decision: RecommendationDecision
+}
+
+struct RecommendationReviewResponse: Decodable, Equatable {
+    let id: String
+    let status: RecommendationStatus
+    let espnActionExecuted: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, status
+        case espnActionExecuted = "espn_action_executed"
+    }
+}
+
 /// A bounded, Codable representation of arbitrary server JSON. The UI only renders known fields.
 indirect enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
@@ -293,6 +313,29 @@ indirect enum JSONValue: Codable, Equatable, Sendable {
     }
 }
 
+extension JSONValue {
+    var stringValue: String? {
+        guard case let .string(value) = self else { return nil }
+        return value
+    }
+
+    var numberValue: Double? {
+        guard case let .number(value) = self else { return nil }
+        return value
+    }
+
+    var stringArrayValue: [String]? {
+        guard case let .array(values) = self else { return nil }
+        let strings = values.compactMap(\.stringValue)
+        return strings.count == values.count ? strings : nil
+    }
+
+    subscript(key: String) -> JSONValue? {
+        guard case let .object(values) = self else { return nil }
+        return values[key]
+    }
+}
+
 struct Recommendation: Decodable, Identifiable, Equatable {
     let id: String
     let workspace: String
@@ -319,6 +362,25 @@ struct Recommendation: Decodable, Identifiable, Equatable {
     var confidenceLabel: String? {
         guard let confidence else { return nil }
         return "\(Int(confidence.rounded()))% confidence"
+    }
+
+    func updating(status: RecommendationStatus, reviewedAt: String? = nil) -> Recommendation {
+        Recommendation(
+            id: id,
+            workspace: workspace,
+            snapshot: snapshot,
+            kind: kind,
+            title: title,
+            summary: summary,
+            confidence: confidence,
+            impactPoints: impactPoints,
+            payload: payload,
+            status: status,
+            expiresAt: expiresAt,
+            reviewedAt: reviewedAt ?? self.reviewedAt,
+            created: created,
+            updated: updated
+        )
     }
 }
 

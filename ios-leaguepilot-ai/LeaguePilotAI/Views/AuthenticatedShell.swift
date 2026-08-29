@@ -34,7 +34,21 @@ private struct MovesView: View {
             Text(session.selectedConnection?.displayName ?? "Select a league on Home").font(.subheadline).foregroundStyle(Theme.inkSecondary)
             if let error { Text(error).foregroundStyle(Theme.clay).leagueCard() }
             else if recommendations.isEmpty { LPEmptyState(systemImage: "sparkles", title: "No moves to review", message: "Run a completed analysis for the selected league to load verified lineup, waiver, and trade guidance.") }
-            else { ForEach(recommendations) { item in VStack(alignment: .leading, spacing: 6) { Label(item.kind.capitalized, systemImage: "sparkles").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald); Text(item.title).font(.headline); Text(item.summary).font(.subheadline).foregroundStyle(Theme.inkSecondary).lineLimit(4); if let confidence = item.confidenceLabel { Text(confidence).font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }; Text(item.status.rawValue.capitalized).font(.caption).foregroundStyle(Theme.inkSecondary) }.padding(16).leagueCard() } }
+            else { ForEach(recommendations) { item in
+                NavigationLink {
+                    RecommendationDetailView(session: session, recommendation: item) { id, status in
+                        guard let index = recommendations.firstIndex(where: { $0.id == id }) else { return }
+                        recommendations[index] = recommendations[index].updating(status: status)
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack { Label(item.kind.capitalized, systemImage: "sparkles").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald); Spacer(); LPStatusPill(text: item.status.rawValue.capitalized, systemImage: item.status == .proposed ? "clock" : "checkmark.circle", kind: item.status == .approved ? .connected : .neutral) }
+                        Text(item.title).font(.headline).foregroundStyle(Theme.ink)
+                        Text(item.summary).font(.subheadline).foregroundStyle(Theme.inkSecondary).lineLimit(4)
+                        if let confidence = item.confidenceLabel { Text(confidence).font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }
+                    }.padding(16).leagueCard()
+                }.buttonStyle(.plain)
+            } }
         }.padding(16) }.background(Theme.canvas).navigationTitle("Moves").task { do { recommendations = try await session.loadRecommendations() } catch { self.error = FriendlyError.message(for: error) } } }
     }
 }

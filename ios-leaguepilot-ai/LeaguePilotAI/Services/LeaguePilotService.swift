@@ -6,6 +6,7 @@ protocol LeaguePilotServicing {
     func runAnalysis(workspaceID: String, connectionID: String, token: String) async throws -> AnalysisQueueResponse
     func saveESPNConnection(workspaceID: String, connection: ESPNConnectionRequest, token: String) async throws -> ConnectionSaveResponse
     func sync(connectionID: String, token: String) async throws -> SyncQueueResponse
+    func reviewRecommendation(id: String, decision: RecommendationDecision, token: String) async throws -> RecommendationReviewResponse
 }
 
 @MainActor
@@ -27,5 +28,15 @@ final class LeaguePilotService: LeaguePilotServicing {
 
     func sync(connectionID: String, token: String) async throws -> SyncQueueResponse {
         try await client.send(SyncQueueResponse.self, method: "POST", path: "/api/leaguepilot/connections/\(connectionID)/sync", body: Data("{}".utf8), token: token)
+    }
+
+    func reviewRecommendation(id: String, decision: RecommendationDecision, token: String) async throws -> RecommendationReviewResponse {
+        try await client.send(
+            RecommendationReviewResponse.self,
+            method: "POST",
+            path: "/api/leaguepilot/recommendations/\(id)/review",
+            body: try JSONEncoder().encode(RecommendationReviewRequest(decision: decision)),
+            token: token
+        )
     }
 }

@@ -101,6 +101,12 @@ final class SessionStore {
         catch { handleAuthenticatedError(error); throw error }
     }
 
+    func reviewRecommendation(id: String, decision: RecommendationDecision) async throws -> RecommendationReviewResponse {
+        guard let authToken else { throw LeaguePilotError(status: nil, message: "Your session has ended.") }
+        do { return try await leaguePilot.reviewRecommendation(id: id, decision: decision, token: authToken) }
+        catch { handleAuthenticatedError(error); throw error }
+    }
+
     func syncSelectedConnection() async throws -> SyncQueueResponse { guard let authToken, let connectionID = selectedConnectionID else { throw LeaguePilotError(status: nil, message: "Select an ESPN league first.") }; return try await leaguePilot.sync(connectionID: connectionID, token: authToken) }
 
     func signOut() { try? keychain.removeAll(); user = nil; workspace = nil; connections = []; selectedConnectionID = nil; authToken = nil; phase = .signedOut }

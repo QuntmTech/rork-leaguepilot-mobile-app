@@ -27,6 +27,21 @@ struct LeaguePilotAITests {
         #expect(recommendation.confidence == 91.5)
     }
 
+    @Test func usesProtectedRecommendationReviewContract() throws {
+        let request = RecommendationReviewRequest(decision: .approved)
+        let requestData = try JSONEncoder().encode(request)
+        let body = try #require(JSONSerialization.jsonObject(with: requestData) as? [String: String])
+        #expect(body == ["decision": "approved"])
+
+        let response = try JSONDecoder().decode(
+            RecommendationReviewResponse.self,
+            from: Data("{\"id\":\"recommendation-id\",\"status\":\"approved\",\"espn_action_executed\":false}".utf8)
+        )
+        #expect(response.id == "recommendation-id")
+        #expect(response.status == .approved)
+        #expect(!response.espnActionExecuted)
+    }
+
     @Test func allLiveJobStatusesHaveHonestTerminalState() {
         #expect(JobStatus.queued.isPending && JobStatus.running.isPending)
         #expect(JobStatus.succeeded.isTerminal && JobStatus.failed.isTerminal && JobStatus.cancelled.isTerminal && JobStatus.deadLetter.isTerminal)
