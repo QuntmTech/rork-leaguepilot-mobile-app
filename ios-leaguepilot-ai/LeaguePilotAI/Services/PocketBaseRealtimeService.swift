@@ -24,17 +24,19 @@ protocol PocketBaseRealtimeServicing: AnyObject {
 final class PocketBaseRealtimeService: PocketBaseRealtimeServicing {
     private let baseURL: URL
     private let session: URLSession
+    private let reconnectDelayNanoseconds: UInt64
 
-    init(baseURL: URL = LeaguePilotConfig.baseURL, session: URLSession = .shared) {
+    init(baseURL: URL = LeaguePilotConfig.baseURL, session: URLSession = .shared, reconnectDelayNanoseconds: UInt64 = 1_000_000_000) {
         self.baseURL = baseURL
         self.session = session
+        self.reconnectDelayNanoseconds = reconnectDelayNanoseconds
     }
 
     func events(token: String, collections: [String]) -> AsyncThrowingStream<PocketBaseRealtimeEvent, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task { [baseURL, session] in
-                do {
-                    while !Task.isCancelled {
+            let task = Task { [baseURL, session, reconnectDelayNanoseconds] in
+                while !Task.isCancelled {
+                    do {
                         try await Self.receiveConnection(
                             baseURL: baseURL,
                             session: session,
@@ -42,15 +44,19 @@ final class PocketBaseRealtimeService: PocketBaseRealtimeServicing {
                             collections: collections,
                             continuation: continuation
                         )
-                        guard !Task.isCancelled else { break }
-                        try await Task.sleep(nanoseconds: 1_000_000_000)
+                    } catch is CancellationError {
+                        break
+                    } catch let error as LeaguePilotError where error.isSessionExpired {
+                        continuation.finish(throwing: error)
+                        return
+                    } catch {
+                        // PocketBase closes quiet SSE streams and network changes are normal on
+                        // mobile. Retry transient failures, but never retry an expired session.
                     }
-                    continuation.finish()
-                } catch is CancellationError {
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
+                    guard !Task.isCancelled else { break }
+                    try? await Task.sleep(nanoseconds: reconnectDelayNanoseconds)
                 }
+                continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }

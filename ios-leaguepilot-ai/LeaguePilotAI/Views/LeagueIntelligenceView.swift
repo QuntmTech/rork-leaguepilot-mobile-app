@@ -24,11 +24,11 @@ struct LeagueIntelligenceView: View {
         }
     }
 
-    private var loadID: String { "\(session.selectedConnectionID ?? "none")-\(session.realtimeRevision)" }
+    private var loadID: String { "\(session.selectedConnectionID ?? "none")-\(session.selectedLeagueRevision)-\(session.realtimeRevision)" }
 
     private var title: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("League Intelligence").font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
+            Text("League Intelligence").font(.largeTitle.weight(.bold)).foregroundStyle(Theme.ink)
             Text(session.selectedConnection?.displayName ?? "Select a league on Home").font(.subheadline).foregroundStyle(Theme.inkSecondary)
         }
     }
@@ -36,37 +36,60 @@ struct LeagueIntelligenceView: View {
     @ViewBuilder private var content: some View {
         if let error = viewModel.errorMessage {
             Text(error).foregroundStyle(Theme.clay).padding(16).leagueCard()
-        } else if let snapshot = viewModel.data?.snapshot {
-            snapshotSummary(snapshot)
-            matchup(snapshot)
-            powerRankings
-            standings(snapshot)
-            opponentTeams(snapshot)
-            weeklyReports
-        } else if viewModel.hasLoadedOnce {
-            LPEmptyState(systemImage: "chart.bar", title: "No snapshot for this league", message: "Synchronize this ESPN league to load its roster, standings, matchups, and reports.")
         } else {
-            ProgressView().frame(maxWidth: .infinity).padding(.vertical, 36)
+            dataWarnings
+            if let snapshot = viewModel.data?.snapshot, let payload = snapshot.payload {
+                snapshotSummary(snapshot, payload: payload)
+                matchup(payload)
+                powerRankings
+                standings(payload)
+                opponentTeams(payload)
+                weeklyReports
+            } else if viewModel.hasLoadedOnce {
+                LPEmptyState(systemImage: "chart.bar", title: "No usable snapshot for this league", message: "Synchronize this ESPN league to load its roster, standings, matchups, and reports.")
+            } else {
+                ProgressView("Loading league intelligence…").frame(maxWidth: .infinity).padding(.vertical, 36)
+            }
         }
     }
 
-    private func snapshotSummary(_ snapshot: LeagueSnapshotRecord) -> some View {
+    @ViewBuilder private var dataWarnings: some View {
+        if let warnings = viewModel.data?.dataWarnings, !warnings.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Data notice", systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .foregroundStyle(Theme.clay)
+                ForEach(warnings, id: \.self) { warning in
+                    Text(warning).font(.footnote).foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            .padding(16)
+            .leagueCard()
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func snapshotSummary(_ snapshot: LeagueSnapshotRecord, payload: LeagueSnapshotPayload) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack { Text(snapshot.payload.leagueName).font(.headline); Spacer(); Text("Week \(snapshot.payload.week)").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }
-            Text("Season \(snapshot.payload.season) · \(snapshot.payload.scoringFormat)").font(.subheadline).foregroundStyle(Theme.inkSecondary)
+            HStack { Text(payload.leagueName).font(.headline); Spacer(); Text("Week \(payload.week)").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }
+            Text("Season \(payload.season) · \(payload.scoringFormat)").font(.subheadline).foregroundStyle(Theme.inkSecondary)
             Text("Synced \(RelativeTime.string(from: snapshot.fetchedAt))").font(.caption).foregroundStyle(Theme.inkSecondary)
-            if !snapshot.payload.dataQualityWarnings.isEmpty {
-                Text(snapshot.payload.dataQualityWarnings.joined(separator: " · ")).font(.footnote).foregroundStyle(Theme.clay)
+            if let expiresAt = snapshot.expiresAt {
+                Text("Backend expiry \(RelativeTime.string(from: expiresAt))").font(.caption).foregroundStyle(Theme.inkSecondary)
+            }
+            if !payload.dataQualityWarnings.isEmpty {
+                Text(payload.dataQualityWarnings.joined(separator: " · ")).font(.footnote).foregroundStyle(Theme.clay)
             }
         }
         .padding(16)
         .leagueCard()
+        .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder private func matchup(_ snapshot: LeagueSnapshotRecord) -> some View {
-        if let mine = snapshot.payload.myTeam,
-           let matchup = snapshot.payload.currentMatchup,
-           let opponent = snapshot.payload.currentOpponent,
+    @ViewBuilder private func matchup(_ payload: LeagueSnapshotPayload) -> some View {
+        if let mine = payload.myTeam,
+           let matchup = payload.currentMatchup,
+           let opponent = payload.currentOpponent,
            let myProjection = matchup.projectedTotal(for: mine.id),
            let opponentProjection = matchup.projectedTotal(for: opponent.id) {
             VStack(alignment: .leading, spacing: 12) {
@@ -84,6 +107,7 @@ struct LeagueIntelligenceView: View {
             }
             .padding(16)
             .leagueCard()
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -102,15 +126,16 @@ struct LeagueIntelligenceView: View {
             }
             .padding(16)
             .leagueCard()
+            .accessibilityElement(children: .combine)
         } else {
             LPEmptyState(systemImage: "list.number", title: "No backend power ranking yet", message: "A weekly report for this snapshot is required before rankings are shown.")
         }
     }
 
-    private func standings(_ snapshot: LeagueSnapshotRecord) -> some View {
+    private func standings(_ payload: LeagueSnapshotPayload) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Standings").font(.headline)
-            ForEach(standingsTeams(snapshot.payload.teams)) { team in
+            ForEach(standingsTeams(payload.teams)) { team in
                 HStack {
                     Text(team.name).font(.subheadline)
                     Spacer()
@@ -124,10 +149,10 @@ struct LeagueIntelligenceView: View {
         .leagueCard()
     }
 
-    private func opponentTeams(_ snapshot: LeagueSnapshotRecord) -> some View {
+    private func opponentTeams(_ payload: LeagueSnapshotPayload) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Opponent rosters").font(.headline)
-            ForEach(snapshot.payload.teams.filter { $0.id != snapshot.payload.myTeamID }) { team in
+            ForEach(payload.opponentTeams) { team in
                 NavigationLink {
                     OpponentTeamDetailView(team: team)
                 } label: {
@@ -139,6 +164,8 @@ struct LeagueIntelligenceView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityHint("Opens \(team.name)’s roster")
             }
         }
         .padding(16)
@@ -161,6 +188,8 @@ struct LeagueIntelligenceView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint("Opens this weekly report")
                 }
             }
             .padding(16)
@@ -186,7 +215,7 @@ struct OpponentTeamDetailView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(team.name).font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text(team.name).font(.largeTitle.weight(.bold)).foregroundStyle(Theme.ink)
                     Text("\(team.record) · \(team.pointsFor.formatted(.number.precision(.fractionLength(1)))) points for").font(.subheadline).foregroundStyle(Theme.inkSecondary)
                     if !team.owner.isEmpty { Text(team.owner).font(.caption).foregroundStyle(Theme.inkSecondary) }
                 }
@@ -215,6 +244,7 @@ struct OpponentTeamDetailView: View {
                         Spacer()
                         if let projected = player.projectedPointsLabel { Text(projected).font(.caption.weight(.semibold)).foregroundStyle(Theme.inkSecondary) }
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
@@ -229,7 +259,7 @@ struct WeeklyReportDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text(report.title).font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(report.title).font(.title.weight(.bold)).foregroundStyle(Theme.ink)
                 Text("Week \(report.week)\(report.publishedAt.map { " · \(RelativeTime.string(from: $0))" } ?? "")").font(.subheadline).foregroundStyle(Theme.inkSecondary)
                 Text(report.bodyMarkdown).font(.body).foregroundStyle(Theme.ink).textSelection(.enabled)
             }

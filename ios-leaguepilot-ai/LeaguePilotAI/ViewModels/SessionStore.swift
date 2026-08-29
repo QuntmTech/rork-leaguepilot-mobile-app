@@ -9,6 +9,9 @@ final class SessionStore {
     private(set) var workspace: Workspace?
     private(set) var connections: [ESPNConnection] = []
     private(set) var selectedConnectionID: String?
+    /// Changes synchronously with the selected connection, allowing every asynchronous consumer
+    /// to reject an older request even before SwiftUI has started its replacement task.
+    private(set) var selectedLeagueRevision = 0
     private(set) var authToken: String?
     /// Increments only for owner-scoped PocketBase events that can change an authenticated screen.
     private(set) var realtimeRevision = 0
@@ -83,7 +86,10 @@ final class SessionStore {
         catch { handleAuthenticatedError(error); throw error }
     }
 
-    func selectConnection(_ id: String) { guard connections.contains(where: { $0.id == id && $0.status.isSelectable }) else { return }; selectedConnectionID = id }
+    func selectConnection(_ id: String) {
+        guard connections.contains(where: { $0.id == id && $0.status.isSelectable }) else { return }
+        setSelectedConnectionID(id)
+    }
 
     func loadLatestJob(for connectionID: String? = nil) async throws -> AnalysisJob? {
         (try await loadJobs(for: connectionID)).first
@@ -102,14 +108,14 @@ final class SessionStore {
         do {
             async let snapshots = pocketBase.snapshots(workspaceID: workspace.id, token: authToken)
             async let recommendations = pocketBase.recommendations(workspaceID: workspace.id, token: authToken)
-            let snapshotIDs = Set(try await snapshots.filter { $0.connection == connectionID }.map(\.id))
+            let snapshotIDs = Set(try await snapshots.filter { $0.connection == connectionID && $0.isUsable }.map(\.id))
             return try await recommendations.filter { guard let snapshot = $0.snapshot else { return false }; return snapshotIDs.contains(snapshot) }
         } catch { handleAuthenticatedError(error); throw error }
     }
 
     func loadLeagueData(for connectionID: String) async throws -> SelectedLeagueData {
         guard let workspace, let authToken else {
-            return SelectedLeagueData(connectionID: connectionID, snapshot: nil, recommendations: [], reports: [], jobs: [])
+            return SelectedLeagueData(connectionID: connectionID, snapshot: nil, recommendations: [], reports: [], jobs: [], dataWarnings: [])
         }
         do {
             async let snapshotsTask = pocketBase.snapshots(workspaceID: workspace.id, token: authToken)
@@ -119,7 +125,13 @@ final class SessionStore {
 
             let snapshots = try await snapshotsTask
             let selectedSnapshots = snapshots.filter { $0.connection == connectionID }
-            let snapshotIDs = Set(selectedSnapshots.map(\.id))
+            let usableSnapshots = selectedSnapshots.filter(\.isUsable)
+            let snapshot = usableSnapshots.first
+            let snapshotIDs = Set(usableSnapshots.map(\.id))
+            var dataWarnings = snapshot?.metadataWarnings ?? []
+            if let latest = selectedSnapshots.first, latest.id != snapshot?.id, !latest.isUsable {
+                dataWarnings.insert("The newest stored snapshot could not be read; showing the latest usable snapshot instead.", at: 0)
+            }
             let recommendations = try await recommendationsTask.filter { recommendation in
                 guard let snapshot = recommendation.snapshot else { return false }
                 return snapshotIDs.contains(snapshot)
@@ -130,10 +142,11 @@ final class SessionStore {
             }
             return SelectedLeagueData(
                 connectionID: connectionID,
-                snapshot: selectedSnapshots.first,
+                snapshot: snapshot,
                 recommendations: recommendations,
                 reports: reports,
-                jobs: try await jobsTask
+                jobs: try await jobsTask,
+                dataWarnings: dataWarnings
             )
         } catch {
             handleAuthenticatedError(error)
@@ -143,7 +156,7 @@ final class SessionStore {
 
     func saveESPNConnection(_ request: ESPNConnectionRequest) async throws -> ConnectionSaveResponse {
         guard let workspace, let authToken else { throw LeaguePilotError(status: nil, message: "Your session has ended.") }
-        do { let response = try await leaguePilot.saveESPNConnection(workspaceID: workspace.id, connection: request, token: authToken); try await refreshConnections(); selectedConnectionID = response.connection.id; return response }
+        do { let response = try await leaguePilot.saveESPNConnection(workspaceID: workspace.id, connection: request, token: authToken); try await refreshConnections(); setSelectedConnectionID(response.connection.id); return response }
         catch { handleAuthenticatedError(error); throw error }
     }
 
@@ -161,11 +174,19 @@ final class SessionStore {
 
     func syncSelectedConnection() async throws -> SyncQueueResponse { guard let authToken, let connectionID = selectedConnectionID else { throw LeaguePilotError(status: nil, message: "Select an ESPN league first.") }; do { return try await leaguePilot.sync(connectionID: connectionID, token: authToken) } catch { handleAuthenticatedError(error); throw error } }
 
-    func signOut() { stopRealtime(); try? keychain.removeAll(); user = nil; workspace = nil; connections = []; selectedConnectionID = nil; authToken = nil; realtimeRevision = 0; phase = .signedOut }
+    func signOut() { stopRealtime(); try? keychain.removeAll(); user = nil; workspace = nil; connections = []; setSelectedConnectionID(nil); authToken = nil; realtimeRevision = 0; phase = .signedOut }
 
     private func apply(_ auth: PBAuthResponse) throws { try keychain.set(auth.token, for: .authToken); user = auth.record; authToken = auth.token }
     private func bootstrapAndLoad() async throws { guard let authToken else { throw LeaguePilotError(status: nil, message: "Your session has ended.") }; phase = .loadingWorkspace; let response = try await leaguePilot.bootstrap(token: authToken); workspace = response.workspace; phase = .loadingDashboard; try await refreshConnections(); phase = .ready; startRealtime() }
-    private func selectPreferredConnection() { if let id = selectedConnectionID, activeConnections.contains(where: { $0.id == id }) { return }; selectedConnectionID = activeConnections.sorted { $0.selectionDate > $1.selectionDate }.first?.id }
+    private func selectPreferredConnection() {
+        if let id = selectedConnectionID, activeConnections.contains(where: { $0.id == id }) { return }
+        setSelectedConnectionID(activeConnections.sorted { $0.selectionDate > $1.selectionDate }.first?.id)
+    }
+    private func setSelectedConnectionID(_ id: String?) {
+        guard selectedConnectionID != id else { return }
+        selectedConnectionID = id
+        selectedLeagueRevision &+= 1
+    }
     private func handle(_ error: Error) { if (error as? LeaguePilotError)?.isSessionExpired == true { signOut() } else { phase = .failed(FriendlyError.message(for: error)) } }
     private func handleAuthenticatedError(_ error: Error) { if (error as? LeaguePilotError)?.isSessionExpired == true { signOut() } }
 
@@ -182,29 +203,34 @@ final class SessionStore {
         realtimeGeneration &+= 1
         let generation = realtimeGeneration
         isReceivingRealtimeUpdates = true
-        realtimeTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                if self.realtimeGeneration == generation {
-                    self.isReceivingRealtimeUpdates = false
-                }
-            }
+        let realtime = realtime
+        realtimeTask = Task { [weak self, realtime] in
             do {
-                for try await event in self.realtime.events(token: authToken, collections: collections) {
+                for try await event in realtime.events(token: authToken, collections: collections) {
                     guard !Task.isCancelled else { return }
+                    guard let self else { return }
                     self.receiveRealtime(event)
                 }
             } catch is CancellationError {
                 // Session changes intentionally end the stream.
             } catch {
-                // Foreground refresh and pull-to-refresh remain available when a live connection drops.
+                guard !Task.isCancelled, let self else { return }
+                self.handleAuthenticatedError(error)
             }
+            guard let self else { return }
+            self.finishRealtime(generation: generation)
         }
     }
 
     private func stopRealtime() {
         realtimeGeneration &+= 1
         realtimeTask?.cancel()
+        realtimeTask = nil
+        isReceivingRealtimeUpdates = false
+    }
+
+    private func finishRealtime(generation: Int) {
+        guard realtimeGeneration == generation else { return }
         realtimeTask = nil
         isReceivingRealtimeUpdates = false
     }

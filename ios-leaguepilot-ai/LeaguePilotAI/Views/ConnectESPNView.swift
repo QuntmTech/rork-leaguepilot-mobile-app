@@ -155,6 +155,7 @@ struct FormRow: View {
                 .font(.subheadline)
                 .foregroundStyle(Theme.ink)
                 .frame(maxWidth: 170)
+                .accessibilityLabel(label)
         }
         .frame(minHeight: 48)
     }
@@ -182,9 +183,11 @@ struct SecureCredentialRow: View {
                 if isRevealed {
                     TextField("••••••••", text: $text)
                         .multilineTextAlignment(.trailing)
+                        .accessibilityLabel(label)
                 } else {
                     SecureField("••••••••", text: $text)
                         .multilineTextAlignment(.trailing)
+                        .accessibilityLabel(label)
                 }
             }
             .font(.subheadline)
@@ -197,6 +200,7 @@ struct SecureCredentialRow: View {
                     .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
             }
+            .accessibilityLabel(isRevealed ? "Hide \(label)" : "Show \(label)")
         }
         .frame(minHeight: 48)
     }

@@ -218,11 +218,13 @@ struct AuthField: View {
                 Group {
                     if isSecure && !isRevealed {
                         SecureField(placeholder, text: $text)
+                            .accessibilityLabel(label)
                     } else {
                         TextField(placeholder, text: $text)
                             .keyboardType(keyboard)
                             .textInputAutocapitalization(keyboard == .emailAddress ? .never : nil)
                             .autocorrectionDisabled()
+                            .accessibilityLabel(label)
                     }
                 }
                 .font(.body)
@@ -235,6 +237,7 @@ struct AuthField: View {
                             .font(.subheadline)
                             .foregroundStyle(Theme.inkSecondary)
                     }
+                    .accessibilityLabel(isRevealed ? "Hide password" : "Show password")
                 }
             }
             .frame(minHeight: 46)

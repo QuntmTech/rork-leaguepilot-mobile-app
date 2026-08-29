@@ -417,6 +417,39 @@ struct LeaguePlayer: Decodable, Identifiable, Equatable {
         case percentOwned = "percent_owned"
     }
 
+    /// These defaults mirror the current worker schema. They only cover fields that the backend
+    /// itself marks optional, so older snapshots remain readable without inventing new metrics.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        position = try container.decode(String.self, forKey: .position)
+        proTeam = try container.decodeIfPresent(String.self, forKey: .proTeam) ?? "FA"
+        projectedPoints = try container.decodeIfPresent(Double.self, forKey: .projectedPoints) ?? 0
+        seasonPoints = try container.decodeIfPresent(Double.self, forKey: .seasonPoints) ?? 0
+        averagePoints = try container.decodeIfPresent(Double.self, forKey: .averagePoints) ?? 0
+        injuryStatus = try container.decodeIfPresent(String.self, forKey: .injuryStatus) ?? "ACTIVE"
+        currentSlot = try container.decodeIfPresent(String.self, forKey: .currentSlot) ?? "BE"
+        eligibleSlots = try container.decodeIfPresent([String].self, forKey: .eligibleSlots) ?? []
+        opponent = try container.decodeIfPresent(String.self, forKey: .opponent) ?? ""
+        percentOwned = try container.decodeIfPresent(Double.self, forKey: .percentOwned) ?? 0
+    }
+
+    init(id: String, name: String, position: String, proTeam: String = "FA", projectedPoints: Double = 0, seasonPoints: Double = 0, averagePoints: Double = 0, injuryStatus: String = "ACTIVE", currentSlot: String = "BE", eligibleSlots: [String] = [], opponent: String = "", percentOwned: Double = 0) {
+        self.id = id
+        self.name = name
+        self.position = position
+        self.proTeam = proTeam
+        self.projectedPoints = projectedPoints
+        self.seasonPoints = seasonPoints
+        self.averagePoints = averagePoints
+        self.injuryStatus = injuryStatus
+        self.currentSlot = currentSlot
+        self.eligibleSlots = eligibleSlots
+        self.opponent = opponent
+        self.percentOwned = percentOwned
+    }
+
     var isStarter: Bool { currentSlot != "BE" && currentSlot != "IR" }
     var projectedPointsLabel: String? { projectedPoints > 0 ? String(format: "%.1f proj", projectedPoints) : nil }
 }
@@ -436,6 +469,31 @@ struct LeagueTeam: Decodable, Identifiable, Equatable {
         case id, name, owner, wins, losses, ties, roster
         case pointsFor = "points_for"
         case projectedTotal = "projected_total"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        owner = try container.decodeIfPresent(String.self, forKey: .owner) ?? ""
+        wins = try container.decodeIfPresent(Int.self, forKey: .wins) ?? 0
+        losses = try container.decodeIfPresent(Int.self, forKey: .losses) ?? 0
+        ties = try container.decodeIfPresent(Int.self, forKey: .ties) ?? 0
+        pointsFor = try container.decodeIfPresent(Double.self, forKey: .pointsFor) ?? 0
+        projectedTotal = try container.decodeIfPresent(Double.self, forKey: .projectedTotal) ?? 0
+        roster = try container.decodeIfPresent([LeaguePlayer].self, forKey: .roster) ?? []
+    }
+
+    init(id: Int, name: String, owner: String = "", wins: Int = 0, losses: Int = 0, ties: Int = 0, pointsFor: Double = 0, projectedTotal: Double = 0, roster: [LeaguePlayer] = []) {
+        self.id = id
+        self.name = name
+        self.owner = owner
+        self.wins = wins
+        self.losses = losses
+        self.ties = ties
+        self.pointsFor = pointsFor
+        self.projectedTotal = projectedTotal
+        self.roster = roster
     }
 
     var record: String { ties > 0 ? "\(wins)-\(losses)-\(ties)" : "\(wins)-\(losses)" }
@@ -460,6 +518,27 @@ struct LeagueMatchup: Decodable, Identifiable, Equatable {
         case awayScore = "away_score"
         case homeProjected = "home_projected"
         case awayProjected = "away_projected"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        week = try container.decode(Int.self, forKey: .week)
+        homeTeamID = try container.decode(Int.self, forKey: .homeTeamID)
+        awayTeamID = try container.decode(Int.self, forKey: .awayTeamID)
+        homeScore = try container.decodeIfPresent(Double.self, forKey: .homeScore) ?? 0
+        awayScore = try container.decodeIfPresent(Double.self, forKey: .awayScore) ?? 0
+        homeProjected = try container.decodeIfPresent(Double.self, forKey: .homeProjected) ?? 0
+        awayProjected = try container.decodeIfPresent(Double.self, forKey: .awayProjected) ?? 0
+    }
+
+    init(week: Int, homeTeamID: Int, awayTeamID: Int, homeScore: Double = 0, awayScore: Double = 0, homeProjected: Double = 0, awayProjected: Double = 0) {
+        self.week = week
+        self.homeTeamID = homeTeamID
+        self.awayTeamID = awayTeamID
+        self.homeScore = homeScore
+        self.awayScore = awayScore
+        self.homeProjected = homeProjected
+        self.awayProjected = awayProjected
     }
 
     var id: String { "\(week)-\(homeTeamID)-\(awayTeamID)" }
@@ -503,12 +582,45 @@ struct LeagueSnapshotPayload: Decodable, Equatable {
         case fetchedAt = "fetched_at"
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        leagueID = try container.decode(Int.self, forKey: .leagueID)
+        leagueName = try container.decode(String.self, forKey: .leagueName)
+        season = try container.decode(Int.self, forKey: .season)
+        week = try container.decode(Int.self, forKey: .week)
+        scoringFormat = try container.decodeIfPresent(String.self, forKey: .scoringFormat) ?? "Custom"
+        myTeamID = try container.decode(Int.self, forKey: .myTeamID)
+        rosterSlots = try container.decodeIfPresent([String].self, forKey: .rosterSlots) ?? []
+        teams = try container.decode([LeagueTeam].self, forKey: .teams)
+        freeAgents = try container.decodeIfPresent([LeaguePlayer].self, forKey: .freeAgents) ?? []
+        matchups = try container.decodeIfPresent([LeagueMatchup].self, forKey: .matchups) ?? []
+        dataQualityWarnings = try container.decodeIfPresent([String].self, forKey: .dataQualityWarnings) ?? []
+        fetchedAt = try container.decode(String.self, forKey: .fetchedAt)
+    }
+
+    init(leagueID: Int, leagueName: String, season: Int, week: Int, scoringFormat: String = "Custom", myTeamID: Int, rosterSlots: [String] = [], teams: [LeagueTeam], freeAgents: [LeaguePlayer] = [], matchups: [LeagueMatchup] = [], dataQualityWarnings: [String] = [], fetchedAt: String) {
+        self.leagueID = leagueID
+        self.leagueName = leagueName
+        self.season = season
+        self.week = week
+        self.scoringFormat = scoringFormat
+        self.myTeamID = myTeamID
+        self.rosterSlots = rosterSlots
+        self.teams = teams
+        self.freeAgents = freeAgents
+        self.matchups = matchups
+        self.dataQualityWarnings = dataQualityWarnings
+        self.fetchedAt = fetchedAt
+    }
+
     var myTeam: LeagueTeam? { teams.first { $0.id == myTeamID } }
     var currentMatchup: LeagueMatchup? { matchups.first { $0.week == week && $0.opponentID(for: myTeamID) != nil } }
     var currentOpponent: LeagueTeam? {
         guard let opponentID = currentMatchup?.opponentID(for: myTeamID) else { return nil }
         return teams.first { $0.id == opponentID }
     }
+
+    var opponentTeams: [LeagueTeam] { teams.filter { $0.id != myTeamID } }
 }
 
 struct LeagueSnapshotRecord: Decodable, Identifiable, Equatable {
@@ -516,15 +628,74 @@ struct LeagueSnapshotRecord: Decodable, Identifiable, Equatable {
     let workspace: String
     let connection: String?
     let week: Int
-    let payload: LeagueSnapshotPayload
+    let payload: LeagueSnapshotPayload?
+    let contentHash: String?
+    let schemaVersion: Int?
     let fetchedAt: String
     let expiresAt: String?
     let created: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, workspace, connection, week, payload, created
+        case contentHash = "content_hash"
+        case schemaVersion = "schema_version"
         case fetchedAt = "fetched_at"
         case expiresAt = "expires_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        workspace = try container.decode(String.self, forKey: .workspace)
+        connection = try container.decodeIfPresent(String.self, forKey: .connection)
+        week = try container.decode(Int.self, forKey: .week)
+        contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
+        fetchedAt = try container.decode(String.self, forKey: .fetchedAt)
+        expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
+        created = try container.decodeIfPresent(String.self, forKey: .created)
+
+        if let rawPayload = try container.decodeIfPresent(JSONValue.self, forKey: .payload) {
+            payload = rawPayload.decode(LeagueSnapshotPayload.self)
+        } else {
+            payload = nil
+        }
+    }
+
+    init(id: String, workspace: String, connection: String?, week: Int, payload: LeagueSnapshotPayload?, contentHash: String? = nil, schemaVersion: Int? = nil, fetchedAt: String, expiresAt: String? = nil, created: String? = nil) {
+        self.id = id
+        self.workspace = workspace
+        self.connection = connection
+        self.week = week
+        self.payload = payload
+        self.contentHash = contentHash
+        self.schemaVersion = schemaVersion
+        self.fetchedAt = fetchedAt
+        self.expiresAt = expiresAt
+        self.created = created
+    }
+
+    var isUsable: Bool { payload != nil }
+
+    var metadataWarnings: [String] {
+        var warnings: [String] = []
+        if payload == nil {
+            warnings.append("This stored snapshot has an unreadable payload and cannot be shown.")
+        }
+        if let schemaVersion, !(1...2).contains(schemaVersion) {
+            warnings.append("Snapshot schema version \(schemaVersion) is outside this app’s verified compatibility range (1–2).")
+        }
+        if let expiresAt, RelativeTime.date(from: expiresAt) == nil {
+            warnings.append("The backend expiry timestamp could not be read.")
+        } else if isExpired {
+            warnings.append("The backend marked this snapshot expired \(expiresAt.map(RelativeTime.string(from:)) ?? "earlier"). Refresh it before relying on it.")
+        }
+        return warnings
+    }
+
+    var isExpired: Bool {
+        guard let expiresAt, let expiration = RelativeTime.date(from: expiresAt) else { return false }
+        return expiration <= Date()
     }
 }
 
@@ -577,10 +748,43 @@ struct SelectedLeagueData: Equatable {
     let recommendations: [Recommendation]
     let reports: [WeeklyReport]
     let jobs: [AnalysisJob]
+    let dataWarnings: [String]
 
     var powerRankings: [PowerRanking] {
         guard let snapshot else { return [] }
         return reports.first(where: { $0.snapshot == snapshot.id })?.powerRankings ?? []
+    }
+}
+
+/// A presentation-ready summary built solely from the selected snapshot, its stored report, and
+/// recommendations attached to that exact snapshot. A missing report intentionally produces nil.
+struct PathToFirstSummary: Equatable {
+    let rank: Int
+    let teamCount: Int
+    let currentScore: Double
+    let leaderTeam: String
+    let leaderGap: Double
+    let proposedRecommendationCount: Int
+    let positiveImpactPoints: Double
+
+    static func make(snapshot: LeagueSnapshotRecord?, rankings: [PowerRanking], recommendations: [Recommendation]) -> PathToFirstSummary? {
+        guard let snapshot,
+              let myTeam = snapshot.payload?.myTeam,
+              let rank = rankings.firstIndex(where: { $0.teamID == myTeam.id }).map({ $0 + 1 }),
+              let current = rankings.first(where: { $0.teamID == myTeam.id }),
+              let leader = rankings.first else {
+            return nil
+        }
+        let proposed = recommendations.filter { $0.snapshot == snapshot.id && $0.status == .proposed }
+        return PathToFirstSummary(
+            rank: rank,
+            teamCount: rankings.count,
+            currentScore: current.score,
+            leaderTeam: leader.team,
+            leaderGap: max(0, leader.score - current.score),
+            proposedRecommendationCount: proposed.count,
+            positiveImpactPoints: proposed.reduce(0) { $0 + max(0, $1.impactPoints ?? 0) }
+        )
     }
 }
 

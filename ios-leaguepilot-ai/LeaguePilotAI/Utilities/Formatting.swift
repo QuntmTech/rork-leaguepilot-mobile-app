@@ -18,17 +18,18 @@ enum RelativeTime {
     private static let plain = ISO8601DateFormatter()
 
     /// Parses PocketBase timestamps ("2026-08-28 09:41:00.000Z") tolerantly.
-    static func date(from timestamp: String) -> Date {
+    static func date(from timestamp: String) -> Date? {
         if let date = fractional.date(from: timestamp) { return date }
         if let date = plain.date(from: timestamp) { return date }
         let spaced = timestamp.replacingOccurrences(of: " ", with: "T")
-        return plain.date(from: spaced) ?? fractional.date(from: spaced) ?? Date()
+        return plain.date(from: spaced) ?? fractional.date(from: spaced)
     }
 
     /// Short relative string, e.g. "2m ago".
     static func string(from timestamp: String) -> String {
+        guard let date = date(from: timestamp) else { return "time unavailable" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date(from: timestamp), relativeTo: Date())
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }

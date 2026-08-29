@@ -37,12 +37,13 @@ private struct MovesView: View {
     @State private var recommendations: [Recommendation] = []
     @State private var error: String?
     @State private var hasLoaded = false
+    @State private var loadGeneration = 0
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    Text("Moves").font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("Moves").font(.largeTitle.weight(.bold)).foregroundStyle(Theme.ink)
                     Text(session.selectedConnection?.displayName ?? "Select a league on Home").font(.subheadline).foregroundStyle(Theme.inkSecondary)
                     if let error {
                         Text(error).foregroundStyle(Theme.clay).padding(16).leagueCard()
@@ -61,6 +62,8 @@ private struct MovesView: View {
                                 recommendationRow(item)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityHint("Opens recommendation details and review actions")
                         }
                     }
                 }
@@ -79,7 +82,7 @@ private struct MovesView: View {
         }
     }
 
-    private var loadID: String { "\(session.selectedConnectionID ?? "none")-\(session.realtimeRevision)" }
+    private var loadID: String { "\(session.selectedConnectionID ?? "none")-\(session.selectedLeagueRevision)-\(session.realtimeRevision)" }
 
     private func recommendationRow(_ item: Recommendation) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -99,6 +102,9 @@ private struct MovesView: View {
     /// SwiftUI cancels this task for a changed id; the explicit id guard also prevents a
     /// non-cooperative network response from the previous league from touching visible state.
     private func load(connectionID: String?) async {
+        loadGeneration &+= 1
+        let requestGeneration = loadGeneration
+        let selectionRevision = session.selectedLeagueRevision
         recommendations = []
         error = nil
         hasLoaded = false
@@ -108,13 +114,17 @@ private struct MovesView: View {
         }
         do {
             let results = try await session.loadRecommendations(for: connectionID)
-            guard !Task.isCancelled, session.selectedConnectionID == connectionID else { return }
+            guard isCurrent(requestGeneration, connectionID: connectionID, selectionRevision: selectionRevision) else { return }
             recommendations = results
         } catch {
-            guard !Task.isCancelled, session.selectedConnectionID == connectionID else { return }
+            guard isCurrent(requestGeneration, connectionID: connectionID, selectionRevision: selectionRevision) else { return }
             self.error = FriendlyError.message(for: error)
         }
-        if !Task.isCancelled, session.selectedConnectionID == connectionID { hasLoaded = true }
+        if isCurrent(requestGeneration, connectionID: connectionID, selectionRevision: selectionRevision) { hasLoaded = true }
+    }
+
+    private func isCurrent(_ requestGeneration: Int, connectionID: String, selectionRevision: Int) -> Bool {
+        !Task.isCancelled && loadGeneration == requestGeneration && session.selectedConnectionID == connectionID && session.selectedLeagueRevision == selectionRevision
     }
 }
 

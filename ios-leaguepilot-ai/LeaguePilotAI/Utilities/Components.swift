@@ -4,7 +4,23 @@ struct LPEmptyState: View {
     let systemImage: String
     let title: String
     let message: String
-    var body: some View { VStack(spacing: 12) { Image(systemName: systemImage).font(.system(size: 24, weight: .semibold)).foregroundStyle(Theme.emerald).frame(width: 52, height: 52).background(Theme.lime.opacity(0.25)).clipShape(Circle()); Text(title).font(.headline).foregroundStyle(Theme.ink); Text(message).font(.subheadline).foregroundStyle(Theme.inkSecondary).multilineTextAlignment(.center) }.frame(maxWidth: .infinity).padding(.vertical, 28).leagueCard() }
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(Theme.emerald)
+                .frame(width: 52, height: 52)
+                .background(Theme.lime.opacity(0.25))
+                .clipShape(Circle())
+                .accessibilityHidden(true)
+            Text(title).font(.headline).foregroundStyle(Theme.ink)
+            Text(message).font(.subheadline).foregroundStyle(Theme.inkSecondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .leagueCard()
+        .accessibilityElement(children: .combine)
+    }
 }
 
 struct LPStatusPill: View {

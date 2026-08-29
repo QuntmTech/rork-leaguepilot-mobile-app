@@ -16,6 +16,8 @@ struct HomeView: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     header
                     leagueCard
+                    loadingState
+                    dataWarnings
                     jobCard
                     pathToFirst
                     recommendations
@@ -26,25 +28,54 @@ struct HomeView: View {
             .background(Theme.canvas)
             .refreshable { await viewModel.refresh() }
             .navigationDestination(isPresented: $isShowingConnectESPN) { ConnectESPNView(session: session) }
-            .task(id: session.selectedConnectionID) {
+            .task(id: loadID) {
                 await viewModel.load(connectionID: session.selectedConnectionID)
-            }
-            .onChange(of: session.realtimeRevision) {
-                Task { await viewModel.refreshCurrentLeague() }
             }
             .onDisappear { viewModel.cancelPolling() }
         }
     }
 
+    private var loadID: String { "\(session.selectedConnectionID ?? "none")-\(session.selectedLeagueRevision)-\(session.realtimeRevision)" }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("LEAGUEPILOT AI").font(.footnote.weight(.bold)).foregroundStyle(Theme.emerald).tracking(1)
-            Text(session.workspaceName).font(.system(size: 30, weight: .heavy, design: .rounded)).foregroundStyle(Theme.ink)
-            if let snapshot = viewModel.snapshot {
-                Text("Week \(snapshot.payload.week) · \(snapshot.payload.scoringFormat)")
+            Text(session.workspaceName).font(.largeTitle.weight(.heavy)).foregroundStyle(Theme.ink)
+            if let payload = viewModel.snapshot?.payload {
+                Text("Week \(payload.week) · \(payload.scoringFormat)")
                     .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
             }
+        }
+    }
+
+    @ViewBuilder private var loadingState: some View {
+        if viewModel.isLoading, viewModel.selectedConnection != nil {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Loading selected league data…").font(.footnote).foregroundStyle(Theme.inkSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .leagueCard()
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Loading selected league data")
+        }
+    }
+
+    @ViewBuilder private var dataWarnings: some View {
+        if !viewModel.dataWarnings.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Data notice", systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .foregroundStyle(Theme.clay)
+                ForEach(viewModel.dataWarnings, id: \.self) { warning in
+                    Text(warning).font(.footnote).foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            .padding(16)
+            .leagueCard()
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -111,33 +142,30 @@ struct HomeView: View {
             }
             .padding(16)
             .leagueCard()
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(job.summaryTitle), \(job.status.label)\(job.lastError.map { ", \($0)" } ?? "")")
         }
     }
 
     @ViewBuilder private var pathToFirst: some View {
-        if let snapshot = viewModel.snapshot,
-           let myTeam = snapshot.payload.myTeam,
-           let currentRank = viewModel.powerRankings.firstIndex(where: { $0.teamID == myTeam.id }).map({ $0 + 1 }),
-           let currentScore = viewModel.powerRankings.first(where: { $0.teamID == myTeam.id }),
-           let leader = viewModel.powerRankings.first {
-            let proposed = viewModel.recommendations.filter { $0.snapshot == snapshot.id && $0.status == .proposed }
-            let projectedImpact = proposed.reduce(0) { $0 + max(0, $1.impactPoints ?? 0) }
+        if let summary = viewModel.pathToFirst {
             VStack(alignment: .leading, spacing: 10) {
-                HStack { Label("Path to #1", systemImage: "flag.checkered").font(.headline).foregroundStyle(Theme.ink); Spacer(); Text("#\(currentRank) of \(viewModel.powerRankings.count)").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }
-                Text("Backend power-ranking score: \(currentScore.score.formatted(.number.precision(.fractionLength(1))))")
+                HStack { Label("Path to #1", systemImage: "flag.checkered").font(.headline).foregroundStyle(Theme.ink); Spacer(); Text("#\(summary.rank) of \(summary.teamCount)").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }
+                Text("Backend power-ranking score: \(summary.currentScore.formatted(.number.precision(.fractionLength(1))))")
                     .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
-                if leader.teamID != myTeam.id {
-                    Text("Leader: \(leader.team) · \((leader.score - currentScore.score).formatted(.number.precision(.fractionLength(1)))) score points ahead")
+                if summary.leaderGap > 0 {
+                    Text("Leader: \(summary.leaderTeam) · \(summary.leaderGap.formatted(.number.precision(.fractionLength(1)))) score points ahead")
                         .font(.subheadline)
                         .foregroundStyle(Theme.inkSecondary)
                 }
-                Text(proposed.isEmpty ? "No proposed moves are awaiting review." : "\(proposed.count) proposed move\(proposed.count == 1 ? "" : "s") list \(projectedImpact.formatted(.number.precision(.fractionLength(1)))) projected points of positive impact.")
+                Text(summary.proposedRecommendationCount == 0 ? "No proposed moves are awaiting review." : "\(summary.proposedRecommendationCount) proposed move\(summary.proposedRecommendationCount == 1 ? "" : "s") list \(summary.positiveImpactPoints.formatted(.number.precision(.fractionLength(1)))) projected points of positive impact.")
                     .font(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
             }
             .padding(16)
             .leagueCard()
+            .accessibilityElement(children: .combine)
         } else if viewModel.snapshot != nil, viewModel.hasLoadedOnce {
             LPEmptyState(systemImage: "flag.checkered", title: "Path to #1 awaits a weekly report", message: "Power rankings appear when the backend has stored a weekly report for this league snapshot.")
         }
@@ -155,6 +183,7 @@ struct HomeView: View {
                     }
                     .padding(14)
                     .leagueCard()
+                    .accessibilityElement(children: .combine)
                 }
             }
         } else if viewModel.hasLoadedOnce, viewModel.selectedConnection != nil {

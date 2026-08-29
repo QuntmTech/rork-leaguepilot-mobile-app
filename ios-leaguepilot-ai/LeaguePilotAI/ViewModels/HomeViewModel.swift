@@ -8,7 +8,9 @@ final class HomeViewModel {
     private(set) var snapshot: LeagueSnapshotRecord?
     private(set) var reports: [WeeklyReport] = []
     private(set) var powerRankings: [PowerRanking] = []
+    private(set) var dataWarnings: [String] = []
     private(set) var isRunningAnalysis = false
+    private(set) var isLoading = false
     private(set) var hasLoadedOnce = false
     var errorMessage: String?
     var pollingMessage: String?
@@ -18,6 +20,7 @@ final class HomeViewModel {
     private let pollIntervalNanoseconds: UInt64
     private let maxPollAttempts: Int
     private var displayedConnectionID: String?
+    private var loadGeneration = 0
 
     init(session: SessionStore, pollIntervalNanoseconds: UInt64 = 3_000_000_000, maxPollAttempts: Int = 40) {
         self.session = session
@@ -27,31 +30,53 @@ final class HomeViewModel {
 
     var selectedConnection: ESPNConnection? { session.selectedConnection }
     var activeConnections: [ESPNConnection] { session.activeConnections }
+    var pathToFirst: PathToFirstSummary? {
+        PathToFirstSummary.make(snapshot: snapshot, rankings: powerRankings, recommendations: recommendations)
+    }
 
     /// Reloads one explicit league context. The id check means a response from a previous league
     /// can never overwrite the visible context after the user changes the picker.
     func load(connectionID: String?) async {
+        loadGeneration &+= 1
+        let requestGeneration = loadGeneration
+        let selectionRevision = session.selectedLeagueRevision
+        isLoading = true
         guard let connectionID else {
             clearLeagueData()
             hasLoadedOnce = true
+            isLoading = false
             return
         }
         if displayedConnectionID != connectionID {
             cancelPolling()
             clearLeagueData()
             displayedConnectionID = connectionID
+            hasLoadedOnce = false
         }
 
         do {
             let data = try await session.loadLeagueData(for: connectionID)
-            guard !Task.isCancelled, session.selectedConnectionID == connectionID else { return }
+            guard isCurrent(requestGeneration, connectionID: connectionID, selectionRevision: selectionRevision) else { return }
             apply(data)
             errorMessage = nil
         } catch {
-            guard !Task.isCancelled, session.selectedConnectionID == connectionID else { return }
+            guard isCurrent(requestGeneration, connectionID: connectionID, selectionRevision: selectionRevision) else { return }
             errorMessage = FriendlyError.message(for: error)
         }
-        if !Task.isCancelled, session.selectedConnectionID == connectionID { hasLoadedOnce = true }
+        if isCurrent(requestGeneration, connectionID: connectionID, selectionRevision: selectionRevision) {
+            hasLoadedOnce = true
+            isLoading = false
+        }
+    }
+
+    /// Clears the previous league synchronously before SwiftUI begins its replacement task.
+    func prepareForSelectionChange() {
+        loadGeneration &+= 1
+        cancelPolling()
+        clearLeagueData()
+        displayedConnectionID = nil
+        hasLoadedOnce = false
+        isLoading = true
     }
 
     func refresh() async {
@@ -69,6 +94,8 @@ final class HomeViewModel {
     }
 
     func selectConnection(_ id: String) {
+        guard id != session.selectedConnectionID else { return }
+        prepareForSelectionChange()
         session.selectConnection(id)
     }
 
@@ -157,6 +184,7 @@ final class HomeViewModel {
         reports = data.reports
         powerRankings = data.powerRankings
         latestJob = data.jobs.first
+        dataWarnings = data.dataWarnings
     }
 
     private func clearLeagueData() {
@@ -165,7 +193,12 @@ final class HomeViewModel {
         snapshot = nil
         reports = []
         powerRankings = []
+        dataWarnings = []
         errorMessage = nil
         pollingMessage = nil
+    }
+
+    private func isCurrent(_ requestGeneration: Int, connectionID: String, selectionRevision: Int) -> Bool {
+        !Task.isCancelled && loadGeneration == requestGeneration && session.selectedConnectionID == connectionID && session.selectedLeagueRevision == selectionRevision
     }
 }

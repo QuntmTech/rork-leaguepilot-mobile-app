@@ -50,7 +50,7 @@ struct RecommendationDetailView: View {
                 Spacer()
                 LPStatusPill(text: status.rawValue.capitalized, systemImage: status == .proposed ? "clock" : "checkmark.circle", kind: status == .approved ? .connected : .neutral)
             }
-            Text(recommendation.title).font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.ink)
+            Text(recommendation.title).font(.title.weight(.bold)).foregroundStyle(Theme.ink)
             if let created = recommendation.created { Text("Generated \(RelativeTime.string(from: created))").font(.caption).foregroundStyle(Theme.inkSecondary) }
         }
         .padding(16)
@@ -86,8 +86,10 @@ struct RecommendationDetailView: View {
                 HStack(spacing: 12) {
                     Button { review(.dismissed) } label: { Label("Dismiss", systemImage: "xmark").frame(maxWidth: .infinity) }
                         .buttonStyle(OutlineButtonStyle(stroke: Theme.clay.opacity(0.5), textColor: Theme.clay))
+                        .accessibilityHint("Records that you dismissed this recommendation")
                     Button { review(.approved) } label: { Label("Approve", systemImage: "checkmark").frame(maxWidth: .infinity) }
                         .buttonStyle(PrimaryButtonStyle())
+                        .accessibilityHint("Records that you approved this recommendation")
                 }
                 .disabled(isReviewing)
                 if isReviewing { ProgressView("Saving decision…").font(.footnote) }
