@@ -1,0 +1,45 @@
+{
+  "package": "LEAGUEPILOT AI Native Design Implementation",
+  "version": "1.0.0",
+  "platform": "SwiftUI iOS",
+  "referenceViewport": "393x852 points",
+  "colors": {
+    "background": "#F3EFE5",
+    "card": "#FFFDF8",
+    "primary": "#1D5949",
+    "highlight": "#2F7A63",
+    "text": "#17221F",
+    "border": "#D7D1C6",
+    "muted": "#6E7772",
+    "lime": "#B8DC73"
+  },
+  "requiredExternalAssets": [],
+  "nativeIconSystem": "SF Symbols",
+  "preserve": [
+    "ios-leaguepilot-ai/",
+    "rork.json",
+    "PocketBase service layer",
+    "Keychain session persistence",
+    "existing API contracts"
+  ],
+  "excludeFromNativeApp": [
+    "fake phone frame",
+    "fake Dynamic Island",
+    "fake home indicator",
+    "desktop preview background",
+    "prototype control rail",
+    "prototype demo labels",
+    "browser localStorage",
+    "simulated network controls"
+  ],
+  "nativeFiles": [
+    "swiftui/LeaguePilotDesignTokens.swift",
+    "swiftui/LeaguePilotUIComponents.swift"
+  ],
+  "documentation": [
+    "README.md",
+    "specs/SCREEN_IMPLEMENTATION.md",
+    "specs/SF_SYMBOLS_AND_ASSETS.md",
+    "APPLY_TO_SWIFTUI_PROMPT.md"
+  ]
+}
