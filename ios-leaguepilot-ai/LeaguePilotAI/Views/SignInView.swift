@@ -86,7 +86,7 @@ struct SignInView: View {
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(isBusy || email.isEmpty || password.isEmpty)
+            .disabled(isBusy || email.isEmpty || password.count < 8)
         }
         .padding(16)
         .leagueCard()
@@ -157,7 +157,7 @@ struct SignInView: View {
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(isBusy || fullName.isEmpty || signUpEmail.isEmpty || signUpPassword.isEmpty)
+            .disabled(isBusy || fullName.isEmpty || signUpEmail.isEmpty || signUpPassword.count < 8)
         }
         .padding(16)
         .leagueCard()

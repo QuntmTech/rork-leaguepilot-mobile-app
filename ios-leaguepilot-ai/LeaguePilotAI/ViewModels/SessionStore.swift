@@ -50,6 +50,19 @@ final class SessionStore {
 
     func retry() async { guard authToken != nil else { phase = .signedOut; return }; do { try await bootstrapAndLoad() } catch { handle(error) } }
 
+    /// Mobile sessions are independent of the web's HttpOnly cookie. Refresh the Keychain-backed
+    /// PocketBase token whenever the application returns to the foreground.
+    func refreshSessionOnForeground() async {
+        guard let token = authToken, phase == .ready else { return }
+        do {
+            let auth = try await pocketBase.authRefresh(token: token)
+            try apply(auth)
+            try await bootstrapAndLoad()
+        } catch {
+            handle(error)
+        }
+    }
+
     func refreshConnections() async throws {
         guard let workspace, let authToken else { return }
         do { connections = try await pocketBase.connections(workspaceID: workspace.id, token: authToken); selectPreferredConnection() }

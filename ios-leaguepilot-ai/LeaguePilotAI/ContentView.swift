@@ -8,6 +8,7 @@ import SwiftUI
 /// Root gate: splash while restoring, Sign In when signed out, Home when signed in.
 struct ContentView: View {
     @State private var session = SessionStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -38,6 +39,11 @@ struct ContentView: View {
         .tint(Theme.forest)
         .preferredColorScheme(.light)
         .task { await session.restoreSession() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await session.refreshSessionOnForeground() }
+            }
+        }
     }
 }
 

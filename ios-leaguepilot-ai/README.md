@@ -17,7 +17,7 @@ The project intentionally has no Apple team configured and retains its temporary
 
 `LEAGUEPILOT_CLOUDPOD_URL` is an optional public Xcode build setting exposed through the generated Info.plist. It must be a plain HTTPS origin; invalid values fall back to `https://leaguepilot-ai.cloudpod.pro`.
 
-The app uses PocketBase `users` authentication plus `POST /api/leaguepilot/bootstrap`, `espn_connections`, `job_runs`, `league_snapshots`, and `recommendations`. ESPN saves use the backend's exact snake-case fields, and analysis always includes the selected connection record ID.
+The app uses PocketBase `users` authentication plus `POST /api/leaguepilot/bootstrap`, `espn_connections`, `job_runs`, `league_snapshots`, and `recommendations`. ESPN saves use the backend's exact snake-case fields, and analysis always includes the selected connection record ID. Mobile and web share users and owner-scoped records through this same backend; their sessions remain intentionally independent. The app refreshes its Keychain-backed token when returning to the foreground.
 
 ## Security and limits
 
