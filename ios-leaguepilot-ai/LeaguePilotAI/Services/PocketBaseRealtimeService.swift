@@ -24,37 +24,42 @@ protocol PocketBaseRealtimeServicing: AnyObject {
 final class PocketBaseRealtimeService: PocketBaseRealtimeServicing {
     private let baseURL: URL
     private let session: URLSession
-    private let reconnectDelayNanoseconds: UInt64
 
-    init(baseURL: URL = LeaguePilotConfig.baseURL, session: URLSession = .shared, reconnectDelayNanoseconds: UInt64 = 1_000_000_000) {
+    init(baseURL: URL = LeaguePilotConfig.baseURL, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.session = session
-        self.reconnectDelayNanoseconds = reconnectDelayNanoseconds
     }
 
     func events(token: String, collections: [String]) -> AsyncThrowingStream<PocketBaseRealtimeEvent, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task { [baseURL, session, reconnectDelayNanoseconds] in
+            let task = Task { [baseURL, session] in
+                var backoff = RealtimeReconnectBackoff()
                 while !Task.isCancelled {
                     do {
-                        try await Self.receiveConnection(
+                        let connectionWasHealthy = try await Self.receiveConnection(
                             baseURL: baseURL,
                             session: session,
                             token: token,
                             collections: collections,
                             continuation: continuation
                         )
+                        try await Task.sleep(nanoseconds: backoff.nextDelayNanoseconds(afterHealthyConnection: connectionWasHealthy))
                     } catch is CancellationError {
                         break
-                    } catch let error as LeaguePilotError where error.isSessionExpired {
-                        continuation.finish(throwing: error)
-                        return
                     } catch {
-                        // PocketBase closes quiet SSE streams and network changes are normal on
-                        // mobile. Retry transient failures, but never retry an expired session.
+                        let failure = error as? RealtimeConnectionFailure
+                        let cause = failure?.underlying ?? error
+                        if let leaguePilotError = cause as? LeaguePilotError {
+                            if leaguePilotError.isSessionExpired || leaguePilotError.isPermissionDenied {
+                                continuation.finish(throwing: leaguePilotError)
+                                return
+                            }
+                        }
+                        // PocketBase can close a quiet SSE stream and mobile networks can change
+                        // underneath it. Retry those transient failures with capped exponential
+                        // backoff and jitter; a subscription that became healthy resets the delay.
+                        try? await Task.sleep(nanoseconds: backoff.nextDelayNanoseconds(afterHealthyConnection: failure?.wasHealthy ?? false))
                     }
-                    guard !Task.isCancelled else { break }
-                    try? await Task.sleep(nanoseconds: reconnectDelayNanoseconds)
                 }
                 continuation.finish()
             }
@@ -68,38 +73,48 @@ final class PocketBaseRealtimeService: PocketBaseRealtimeServicing {
         token: String,
         collections: [String],
         continuation: AsyncThrowingStream<PocketBaseRealtimeEvent, Error>.Continuation
-    ) async throws {
-        let realtimeURL = try url(baseURL: baseURL)
-        var request = URLRequest(url: realtimeURL)
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 360
+    ) async throws -> Bool {
+        var connectionWasHealthy = false
+        do {
+            let realtimeURL = try url(baseURL: baseURL)
+            var request = URLRequest(url: realtimeURL)
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.timeoutInterval = 360
 
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw LeaguePilotError(status: (response as? HTTPURLResponse)?.statusCode, message: "Couldn’t start live updates.")
-        }
-
-        var eventName = ""
-        var dataLines: [String] = []
-        for try await line in bytes.lines {
-            if Task.isCancelled { return }
-            if line.isEmpty {
-                try await handle(
-                    eventName: eventName,
-                    dataLines: dataLines,
-                    realtimeURL: realtimeURL,
-                    session: session,
-                    token: token,
-                    collections: collections,
-                    continuation: continuation
-                )
-                eventName = ""
-                dataLines = []
-            } else if line.hasPrefix("event:") {
-                eventName = line.dropFirst("event:".count).trimmingCharacters(in: .whitespaces)
-            } else if line.hasPrefix("data:") {
-                dataLines.append(line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces))
+            let (bytes, response) = try await session.bytes(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw LeaguePilotError(status: (response as? HTTPURLResponse)?.statusCode, message: "Couldn’t start live updates.")
             }
+
+            var eventName = ""
+            var dataLines: [String] = []
+            for try await line in bytes.lines {
+                if Task.isCancelled { throw CancellationError() }
+                if line.isEmpty {
+                    if try await handle(
+                        eventName: eventName,
+                        dataLines: dataLines,
+                        realtimeURL: realtimeURL,
+                        session: session,
+                        token: token,
+                        collections: collections,
+                        continuation: continuation
+                    ) {
+                        connectionWasHealthy = true
+                    }
+                    eventName = ""
+                    dataLines = []
+                } else if line.hasPrefix("event:") {
+                    eventName = line.dropFirst("event:".count).trimmingCharacters(in: .whitespaces)
+                } else if line.hasPrefix("data:") {
+                    dataLines.append(line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces))
+                }
+            }
+            return connectionWasHealthy
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw RealtimeConnectionFailure(underlying: error, wasHealthy: connectionWasHealthy)
         }
     }
 
@@ -111,8 +126,8 @@ final class PocketBaseRealtimeService: PocketBaseRealtimeServicing {
         token: String,
         collections: [String],
         continuation: AsyncThrowingStream<PocketBaseRealtimeEvent, Error>.Continuation
-    ) async throws {
-        guard !dataLines.isEmpty else { return }
+    ) async throws -> Bool {
+        guard !dataLines.isEmpty else { return false }
         let data = Data(dataLines.joined(separator: "\n").utf8)
         if eventName == "PB_CONNECT" {
             struct ConnectPayload: Decodable { let clientId: String }
@@ -127,11 +142,12 @@ final class PocketBaseRealtimeService: PocketBaseRealtimeServicing {
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 throw LeaguePilotError(status: (response as? HTTPURLResponse)?.statusCode, message: "Couldn’t authorize live updates.")
             }
-            return
+            return true
         }
 
-        guard let message = try? JSONDecoder().decode(PocketBaseRealtimeEvent.self, from: data) else { return }
+        guard let message = try? JSONDecoder().decode(PocketBaseRealtimeEvent.self, from: data) else { return false }
         continuation.yield(message)
+        return false
     }
 
     private static func url(baseURL: URL) throws -> URL {
@@ -142,4 +158,31 @@ final class PocketBaseRealtimeService: PocketBaseRealtimeServicing {
         guard let url = components.url else { throw LeaguePilotError(status: nil, message: "Invalid server URL.") }
         return url
     }
+}
+
+/// Small deterministic policy kept separate from URLSession work so retry behavior can be tested
+/// without a live server. The random factor produces 50–100% of the capped exponential delay.
+struct RealtimeReconnectBackoff: Equatable {
+    static let initialDelayNanoseconds: UInt64 = 1_000_000_000
+    static let maximumDelayNanoseconds: UInt64 = 30_000_000_000
+
+    private(set) var consecutiveFailures = 0
+
+    mutating func nextDelayNanoseconds(afterHealthyConnection: Bool, randomUnit: Double = Double.random(in: 0...1)) -> UInt64 {
+        if afterHealthyConnection { reset() }
+        consecutiveFailures = min(consecutiveFailures + 1, 63)
+        let exponent = min(consecutiveFailures - 1, 5)
+        let cappedBase = min(Self.initialDelayNanoseconds << UInt64(exponent), Self.maximumDelayNanoseconds)
+        let normalizedRandom = min(max(randomUnit, 0), 1)
+        return UInt64(Double(cappedBase) * (0.5 + (normalizedRandom * 0.5)))
+    }
+
+    mutating func reset() {
+        consecutiveFailures = 0
+    }
+}
+
+private struct RealtimeConnectionFailure: Error {
+    let underlying: Error
+    let wasHealthy: Bool
 }

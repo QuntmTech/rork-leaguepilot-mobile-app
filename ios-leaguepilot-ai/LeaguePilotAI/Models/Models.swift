@@ -395,15 +395,15 @@ struct LeaguePlayer: Decodable, Identifiable, Equatable {
     let id: String
     let name: String
     let position: String
-    let proTeam: String
-    let projectedPoints: Double
-    let seasonPoints: Double
-    let averagePoints: Double
-    let injuryStatus: String
-    let currentSlot: String
-    let eligibleSlots: [String]
-    let opponent: String
-    let percentOwned: Double
+    let proTeam: String?
+    let projectedPoints: Double?
+    let seasonPoints: Double?
+    let averagePoints: Double?
+    let injuryStatus: String?
+    let currentSlot: String?
+    let eligibleSlots: [String]?
+    let opponent: String?
+    let percentOwned: Double?
 
     private enum CodingKeys: String, CodingKey {
         case id, name, position, opponent
@@ -417,25 +417,25 @@ struct LeaguePlayer: Decodable, Identifiable, Equatable {
         case percentOwned = "percent_owned"
     }
 
-    /// These defaults mirror the current worker schema. They only cover fields that the backend
-    /// itself marks optional, so older snapshots remain readable without inventing new metrics.
+    /// Player identity is required. Every other missing fact stays unavailable rather than being
+    /// represented as a plausible roster slot, injury state, team, or score.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         position = try container.decode(String.self, forKey: .position)
-        proTeam = try container.decodeIfPresent(String.self, forKey: .proTeam) ?? "FA"
-        projectedPoints = try container.decodeIfPresent(Double.self, forKey: .projectedPoints) ?? 0
-        seasonPoints = try container.decodeIfPresent(Double.self, forKey: .seasonPoints) ?? 0
-        averagePoints = try container.decodeIfPresent(Double.self, forKey: .averagePoints) ?? 0
-        injuryStatus = try container.decodeIfPresent(String.self, forKey: .injuryStatus) ?? "ACTIVE"
-        currentSlot = try container.decodeIfPresent(String.self, forKey: .currentSlot) ?? "BE"
-        eligibleSlots = try container.decodeIfPresent([String].self, forKey: .eligibleSlots) ?? []
-        opponent = try container.decodeIfPresent(String.self, forKey: .opponent) ?? ""
-        percentOwned = try container.decodeIfPresent(Double.self, forKey: .percentOwned) ?? 0
+        proTeam = try container.decodeIfPresent(String.self, forKey: .proTeam)
+        projectedPoints = try container.decodeIfPresent(Double.self, forKey: .projectedPoints)
+        seasonPoints = try container.decodeIfPresent(Double.self, forKey: .seasonPoints)
+        averagePoints = try container.decodeIfPresent(Double.self, forKey: .averagePoints)
+        injuryStatus = try container.decodeIfPresent(String.self, forKey: .injuryStatus)
+        currentSlot = try container.decodeIfPresent(String.self, forKey: .currentSlot)
+        eligibleSlots = try container.decodeIfPresent([String].self, forKey: .eligibleSlots)
+        opponent = try container.decodeIfPresent(String.self, forKey: .opponent)
+        percentOwned = try container.decodeIfPresent(Double.self, forKey: .percentOwned)
     }
 
-    init(id: String, name: String, position: String, proTeam: String = "FA", projectedPoints: Double = 0, seasonPoints: Double = 0, averagePoints: Double = 0, injuryStatus: String = "ACTIVE", currentSlot: String = "BE", eligibleSlots: [String] = [], opponent: String = "", percentOwned: Double = 0) {
+    init(id: String, name: String, position: String, proTeam: String? = nil, projectedPoints: Double? = nil, seasonPoints: Double? = nil, averagePoints: Double? = nil, injuryStatus: String? = nil, currentSlot: String? = nil, eligibleSlots: [String]? = nil, opponent: String? = nil, percentOwned: Double? = nil) {
         self.id = id
         self.name = name
         self.position = position
@@ -450,20 +450,32 @@ struct LeaguePlayer: Decodable, Identifiable, Equatable {
         self.percentOwned = percentOwned
     }
 
-    var isStarter: Bool { currentSlot != "BE" && currentSlot != "IR" }
-    var projectedPointsLabel: String? { projectedPoints > 0 ? String(format: "%.1f proj", projectedPoints) : nil }
+    var isStarter: Bool {
+        guard let currentSlot else { return false }
+        return currentSlot != "BE" && currentSlot != "IR"
+    }
+    var isBenchOrIR: Bool { currentSlot == "BE" || currentSlot == "IR" }
+    var projectedPointsLabel: String {
+        guard let projectedPoints else { return "Unavailable" }
+        return "\(projectedPoints.formatted(.number.precision(.fractionLength(1)))) proj"
+    }
+    var rosterMetadataLabel: String {
+        let team = proTeam ?? "Unavailable"
+        let matchup = opponent.map { " · \($0)" } ?? ""
+        return "\(team)\(matchup) · \(currentSlot ?? "Unavailable")"
+    }
 }
 
 struct LeagueTeam: Decodable, Identifiable, Equatable {
     let id: Int
     let name: String
-    let owner: String
-    let wins: Int
-    let losses: Int
-    let ties: Int
-    let pointsFor: Double
-    let projectedTotal: Double
-    let roster: [LeaguePlayer]
+    let owner: String?
+    let wins: Int?
+    let losses: Int?
+    let ties: Int?
+    let pointsFor: Double?
+    let projectedTotal: Double?
+    let roster: [LeaguePlayer]?
 
     private enum CodingKeys: String, CodingKey {
         case id, name, owner, wins, losses, ties, roster
@@ -475,16 +487,16 @@ struct LeagueTeam: Decodable, Identifiable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
-        owner = try container.decodeIfPresent(String.self, forKey: .owner) ?? ""
-        wins = try container.decodeIfPresent(Int.self, forKey: .wins) ?? 0
-        losses = try container.decodeIfPresent(Int.self, forKey: .losses) ?? 0
-        ties = try container.decodeIfPresent(Int.self, forKey: .ties) ?? 0
-        pointsFor = try container.decodeIfPresent(Double.self, forKey: .pointsFor) ?? 0
-        projectedTotal = try container.decodeIfPresent(Double.self, forKey: .projectedTotal) ?? 0
-        roster = try container.decodeIfPresent([LeaguePlayer].self, forKey: .roster) ?? []
+        owner = try container.decodeIfPresent(String.self, forKey: .owner)
+        wins = try container.decodeIfPresent(Int.self, forKey: .wins)
+        losses = try container.decodeIfPresent(Int.self, forKey: .losses)
+        ties = try container.decodeIfPresent(Int.self, forKey: .ties)
+        pointsFor = try container.decodeIfPresent(Double.self, forKey: .pointsFor)
+        projectedTotal = try container.decodeIfPresent(Double.self, forKey: .projectedTotal)
+        roster = try container.decodeIfPresent([LeaguePlayer].self, forKey: .roster)
     }
 
-    init(id: Int, name: String, owner: String = "", wins: Int = 0, losses: Int = 0, ties: Int = 0, pointsFor: Double = 0, projectedTotal: Double = 0, roster: [LeaguePlayer] = []) {
+    init(id: Int, name: String, owner: String? = nil, wins: Int? = nil, losses: Int? = nil, ties: Int? = nil, pointsFor: Double? = nil, projectedTotal: Double? = nil, roster: [LeaguePlayer]? = nil) {
         self.id = id
         self.name = name
         self.owner = owner
@@ -496,19 +508,30 @@ struct LeagueTeam: Decodable, Identifiable, Equatable {
         self.roster = roster
     }
 
-    var record: String { ties > 0 ? "\(wins)-\(losses)-\(ties)" : "\(wins)-\(losses)" }
-    var starters: [LeaguePlayer] { roster.filter(\.isStarter) }
-    var bench: [LeaguePlayer] { roster.filter { !$0.isStarter } }
+    var record: String {
+        guard let wins, let losses, let ties else { return "Unavailable" }
+        return ties > 0 ? "\(wins)-\(losses)-\(ties)" : "\(wins)-\(losses)"
+    }
+    var pointsForLabel: String {
+        pointsFor.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "Unavailable"
+    }
+    var rosterCountLabel: String {
+        roster.map { "\($0.count) rostered players" } ?? "Roster unavailable"
+    }
+    var hasCompleteStanding: Bool { wins != nil && losses != nil && ties != nil && pointsFor != nil }
+    var starters: [LeaguePlayer] { roster?.filter(\.isStarter) ?? [] }
+    var bench: [LeaguePlayer] { roster?.filter(\.isBenchOrIR) ?? [] }
+    var playersWithUnavailableSlots: [LeaguePlayer] { roster?.filter { $0.currentSlot == nil } ?? [] }
 }
 
 struct LeagueMatchup: Decodable, Identifiable, Equatable {
     let week: Int
     let homeTeamID: Int
     let awayTeamID: Int
-    let homeScore: Double
-    let awayScore: Double
-    let homeProjected: Double
-    let awayProjected: Double
+    let homeScore: Double?
+    let awayScore: Double?
+    let homeProjected: Double?
+    let awayProjected: Double?
 
     private enum CodingKeys: String, CodingKey {
         case week
@@ -525,13 +548,13 @@ struct LeagueMatchup: Decodable, Identifiable, Equatable {
         week = try container.decode(Int.self, forKey: .week)
         homeTeamID = try container.decode(Int.self, forKey: .homeTeamID)
         awayTeamID = try container.decode(Int.self, forKey: .awayTeamID)
-        homeScore = try container.decodeIfPresent(Double.self, forKey: .homeScore) ?? 0
-        awayScore = try container.decodeIfPresent(Double.self, forKey: .awayScore) ?? 0
-        homeProjected = try container.decodeIfPresent(Double.self, forKey: .homeProjected) ?? 0
-        awayProjected = try container.decodeIfPresent(Double.self, forKey: .awayProjected) ?? 0
+        homeScore = try container.decodeIfPresent(Double.self, forKey: .homeScore)
+        awayScore = try container.decodeIfPresent(Double.self, forKey: .awayScore)
+        homeProjected = try container.decodeIfPresent(Double.self, forKey: .homeProjected)
+        awayProjected = try container.decodeIfPresent(Double.self, forKey: .awayProjected)
     }
 
-    init(week: Int, homeTeamID: Int, awayTeamID: Int, homeScore: Double = 0, awayScore: Double = 0, homeProjected: Double = 0, awayProjected: Double = 0) {
+    init(week: Int, homeTeamID: Int, awayTeamID: Int, homeScore: Double? = nil, awayScore: Double? = nil, homeProjected: Double? = nil, awayProjected: Double? = nil) {
         self.week = week
         self.homeTeamID = homeTeamID
         self.awayTeamID = awayTeamID
@@ -554,6 +577,14 @@ struct LeagueMatchup: Decodable, Identifiable, Equatable {
     func score(for teamID: Int) -> Double? {
         homeTeamID == teamID ? homeScore : awayTeamID == teamID ? awayScore : nil
     }
+
+    func projectedTotalLabel(for teamID: Int) -> String {
+        projectedTotal(for: teamID).map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "Unavailable"
+    }
+
+    func scoreLabel(for teamID: Int) -> String {
+        score(for: teamID).map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "Unavailable"
+    }
 }
 
 struct LeagueSnapshotPayload: Decodable, Equatable {
@@ -561,13 +592,13 @@ struct LeagueSnapshotPayload: Decodable, Equatable {
     let leagueName: String
     let season: Int
     let week: Int
-    let scoringFormat: String
+    let scoringFormat: String?
     let myTeamID: Int
-    let rosterSlots: [String]
+    let rosterSlots: [String]?
     let teams: [LeagueTeam]
-    let freeAgents: [LeaguePlayer]
-    let matchups: [LeagueMatchup]
-    let dataQualityWarnings: [String]
+    let freeAgents: [LeaguePlayer]?
+    let matchups: [LeagueMatchup]?
+    let dataQualityWarnings: [String]?
     let fetchedAt: String
 
     private enum CodingKeys: String, CodingKey {
@@ -588,17 +619,17 @@ struct LeagueSnapshotPayload: Decodable, Equatable {
         leagueName = try container.decode(String.self, forKey: .leagueName)
         season = try container.decode(Int.self, forKey: .season)
         week = try container.decode(Int.self, forKey: .week)
-        scoringFormat = try container.decodeIfPresent(String.self, forKey: .scoringFormat) ?? "Custom"
+        scoringFormat = try container.decodeIfPresent(String.self, forKey: .scoringFormat)
         myTeamID = try container.decode(Int.self, forKey: .myTeamID)
-        rosterSlots = try container.decodeIfPresent([String].self, forKey: .rosterSlots) ?? []
+        rosterSlots = try container.decodeIfPresent([String].self, forKey: .rosterSlots)
         teams = try container.decode([LeagueTeam].self, forKey: .teams)
-        freeAgents = try container.decodeIfPresent([LeaguePlayer].self, forKey: .freeAgents) ?? []
-        matchups = try container.decodeIfPresent([LeagueMatchup].self, forKey: .matchups) ?? []
-        dataQualityWarnings = try container.decodeIfPresent([String].self, forKey: .dataQualityWarnings) ?? []
+        freeAgents = try container.decodeIfPresent([LeaguePlayer].self, forKey: .freeAgents)
+        matchups = try container.decodeIfPresent([LeagueMatchup].self, forKey: .matchups)
+        dataQualityWarnings = try container.decodeIfPresent([String].self, forKey: .dataQualityWarnings)
         fetchedAt = try container.decode(String.self, forKey: .fetchedAt)
     }
 
-    init(leagueID: Int, leagueName: String, season: Int, week: Int, scoringFormat: String = "Custom", myTeamID: Int, rosterSlots: [String] = [], teams: [LeagueTeam], freeAgents: [LeaguePlayer] = [], matchups: [LeagueMatchup] = [], dataQualityWarnings: [String] = [], fetchedAt: String) {
+    init(leagueID: Int, leagueName: String, season: Int, week: Int, scoringFormat: String? = nil, myTeamID: Int, rosterSlots: [String]? = nil, teams: [LeagueTeam], freeAgents: [LeaguePlayer]? = nil, matchups: [LeagueMatchup]? = nil, dataQualityWarnings: [String]? = nil, fetchedAt: String) {
         self.leagueID = leagueID
         self.leagueName = leagueName
         self.season = season
@@ -614,13 +645,30 @@ struct LeagueSnapshotPayload: Decodable, Equatable {
     }
 
     var myTeam: LeagueTeam? { teams.first { $0.id == myTeamID } }
-    var currentMatchup: LeagueMatchup? { matchups.first { $0.week == week && $0.opponentID(for: myTeamID) != nil } }
+    var currentMatchup: LeagueMatchup? { matchups?.first { $0.week == week && $0.opponentID(for: myTeamID) != nil } }
     var currentOpponent: LeagueTeam? {
         guard let opponentID = currentMatchup?.opponentID(for: myTeamID) else { return nil }
         return teams.first { $0.id == opponentID }
     }
 
     var opponentTeams: [LeagueTeam] { teams.filter { $0.id != myTeamID } }
+
+    var relationshipWarnings: [String] {
+        var warnings: [String] = []
+        let teamIDs = Set(teams.map(\.id))
+        if teamIDs.count != teams.count {
+            warnings.append("This snapshot has duplicate team identities and cannot be shown.")
+        }
+        if !teamIDs.contains(myTeamID) {
+            warnings.append("This snapshot is missing the manager team relationship and cannot be shown.")
+        }
+        if let invalidMatchup = matchups?.first(where: { !teamIDs.contains($0.homeTeamID) || !teamIDs.contains($0.awayTeamID) }) {
+            warnings.append("This snapshot has a matchup with an unknown team relationship (week \(invalidMatchup.week)) and cannot be shown.")
+        }
+        return warnings
+    }
+
+    var hasRequiredRelationships: Bool { relationshipWarnings.isEmpty }
 }
 
 struct LeagueSnapshotRecord: Decodable, Identifiable, Equatable {
@@ -675,12 +723,19 @@ struct LeagueSnapshotRecord: Decodable, Identifiable, Equatable {
         self.created = created
     }
 
-    var isUsable: Bool { payload != nil }
+    var isUsable: Bool { connection != nil && payload?.hasRequiredRelationships == true }
 
     var metadataWarnings: [String] {
         var warnings: [String] = []
         if payload == nil {
             warnings.append("This stored snapshot has an unreadable payload and cannot be shown.")
+        }
+        if connection == nil {
+            warnings.append("This stored snapshot is missing its league connection relationship and cannot be shown.")
+        }
+        if let payload {
+            warnings.append(contentsOf: payload.relationshipWarnings)
+            warnings.append(contentsOf: payload.dataQualityWarnings ?? [])
         }
         if let schemaVersion, !(1...2).contains(schemaVersion) {
             warnings.append("Snapshot schema version \(schemaVersion) is outside this app’s verified compatibility range (1–2).")
@@ -688,7 +743,7 @@ struct LeagueSnapshotRecord: Decodable, Identifiable, Equatable {
         if let expiresAt, RelativeTime.date(from: expiresAt) == nil {
             warnings.append("The backend expiry timestamp could not be read.")
         } else if isExpired {
-            warnings.append("The backend marked this snapshot expired \(expiresAt.map(RelativeTime.string(from:)) ?? "earlier"). Refresh it before relying on it.")
+            warnings.append("The backend marked this snapshot expired. Refresh it before relying on it.")
         }
         return warnings
     }
@@ -765,7 +820,7 @@ struct PathToFirstSummary: Equatable {
     let leaderTeam: String
     let leaderGap: Double
     let proposedRecommendationCount: Int
-    let positiveImpactPoints: Double
+    let positiveImpactPoints: Double?
 
     static func make(snapshot: LeagueSnapshotRecord?, rankings: [PowerRanking], recommendations: [Recommendation]) -> PathToFirstSummary? {
         guard let snapshot,
@@ -776,6 +831,7 @@ struct PathToFirstSummary: Equatable {
             return nil
         }
         let proposed = recommendations.filter { $0.snapshot == snapshot.id && $0.status == .proposed }
+        let availableImpacts = proposed.compactMap(\.impactPoints).map { max(0, $0) }
         return PathToFirstSummary(
             rank: rank,
             teamCount: rankings.count,
@@ -783,7 +839,7 @@ struct PathToFirstSummary: Equatable {
             leaderTeam: leader.team,
             leaderGap: max(0, leader.score - current.score),
             proposedRecommendationCount: proposed.count,
-            positiveImpactPoints: proposed.reduce(0) { $0 + max(0, $1.impactPoints ?? 0) }
+            positiveImpactPoints: availableImpacts.isEmpty ? nil : availableImpacts.reduce(0, +)
         )
     }
 }

@@ -78,17 +78,48 @@ struct LeaguePilotAITests {
         }
     }
 
-    @Test func snapshotDecodingUsesContractDefaultsAndKeepsSchemaVersion() throws {
+    @Test func snapshotDecodingKeepsMissingFactsUnavailable() throws {
         let snapshot = try JSONDecoder().decode(LeagueSnapshotRecord.self, from: Data("""
         {"id":"snapshot-a","workspace":"workspace-a","connection":"connection-a","week":3,"schema_version":2,"fetched_at":"2026-08-28T12:00:00Z","payload":{"league_id":123,"league_name":"Sunday League","season":2026,"week":3,"my_team_id":1,"teams":[{"id":1,"name":"My Team","roster":[{"id":"player-a","name":"Starter","position":"QB"}]}],"fetched_at":"2026-08-28T12:00:00Z"}}
         """.utf8))
 
         let payload = try #require(snapshot.payload)
+        let player = try #require(payload.myTeam?.roster?.first)
         #expect(snapshot.schemaVersion == 2)
-        #expect(payload.scoringFormat == "Custom")
-        #expect(payload.freeAgents.isEmpty && payload.matchups.isEmpty && payload.dataQualityWarnings.isEmpty)
-        #expect(payload.myTeam?.roster.first?.proTeam == "FA")
-        #expect(payload.myTeam?.roster.first?.currentSlot == "BE")
+        #expect(payload.scoringFormat == nil)
+        #expect(payload.freeAgents == nil && payload.matchups == nil && payload.dataQualityWarnings == nil)
+        #expect(player.proTeam == nil)
+        #expect(player.injuryStatus == nil)
+        #expect(player.currentSlot == nil)
+        #expect(!player.isStarter)
+        #expect(!player.isBenchOrIR)
+        #expect(player.projectedPoints == nil)
+        #expect(player.projectedPointsLabel == "Unavailable")
+        #expect(payload.myTeam?.record == "Unavailable")
+        #expect(payload.myTeam?.pointsForLabel == "Unavailable")
+    }
+
+    @Test func explicitBackendZerosRemainVisibleWhileMissingValuesDoNotBecomeZeros() {
+        let player = LeaguePlayer(id: "player-a", name: "Starter", position: "QB", projectedPoints: 0, injuryStatus: "ACTIVE", currentSlot: "QB")
+        let team = LeagueTeam(id: 1, name: "My Team", wins: 0, losses: 0, ties: 0, pointsFor: 0, roster: [player])
+        #expect(player.projectedPointsLabel == "0.0 proj")
+        #expect(team.record == "0-0")
+        #expect(team.pointsForLabel == "0.0")
+    }
+
+    @Test func snapshotsWithMissingRequiredRelationshipsAreQuarantined() {
+        let payload = LeagueSnapshotPayload(
+            leagueID: 123,
+            leagueName: "Sunday League",
+            season: 2026,
+            week: 3,
+            myTeamID: 99,
+            teams: [LeagueTeam(id: 1, name: "Unrelated Team")],
+            fetchedAt: "2026-08-28T12:00:00Z"
+        )
+        let snapshot = LeagueSnapshotRecord(id: "snapshot-invalid", workspace: "workspace-a", connection: "connection-a", week: 3, payload: payload, fetchedAt: "2026-08-28T12:00:00Z")
+        #expect(!snapshot.isUsable)
+        #expect(snapshot.metadataWarnings.contains { $0.contains("missing the manager team relationship") })
     }
 
     @Test func malformedAndNewerSnapshotSchemasAreQuarantinedWithHonestWarnings() throws {
@@ -283,13 +314,46 @@ struct LeaguePilotAITests {
             await Task.yield()
         }
         #expect(!realtime.collections.isEmpty)
-        realtime.finish(throwing: LeaguePilotError(status: 403, message: "Expired"))
+        realtime.finish(throwing: LeaguePilotError(status: 401, message: "Expired"))
         for _ in 0..<20 {
             if realtimeSession.phase == .signedOut { break }
             await Task.yield()
         }
         #expect(realtimeSession.phase == .signedOut)
         #expect(!realtimeSession.isReceivingRealtimeUpdates)
+    }
+
+    @Test func anIsolatedRealtime403KeepsAConfirmedValidSession() async throws {
+        let pocketBase = MockPocketBase()
+        let realtime = MockRealtime()
+        let session = try await TestFixtures.session(pocketBase: pocketBase, realtime: realtime)
+        for _ in 0..<20 {
+            if !realtime.collections.isEmpty { break }
+            await Task.yield()
+        }
+        realtime.finish(throwing: LeaguePilotError(status: 403, message: "Subscription forbidden"))
+        for _ in 0..<20 {
+            if session.realtimeErrorMessage != nil { break }
+            await Task.yield()
+        }
+        #expect(session.isSignedIn)
+        #expect(session.phase == .ready)
+        #expect(!session.isReceivingRealtimeUpdates)
+        #expect(session.realtimeErrorMessage?.contains("does not have permission") == true)
+        #expect(pocketBase.authRefreshCount == 1)
+    }
+
+    @Test func realtimeRetryBackoffIsBoundedAndResetsAfterAHealthyConnection() {
+        var backoff = RealtimeReconnectBackoff()
+        #expect(backoff.nextDelayNanoseconds(afterHealthyConnection: false, randomUnit: 0) == 500_000_000)
+        backoff.reset()
+        #expect(backoff.nextDelayNanoseconds(afterHealthyConnection: false, randomUnit: 1) == 1_000_000_000)
+        #expect(backoff.nextDelayNanoseconds(afterHealthyConnection: false, randomUnit: 1) == 2_000_000_000)
+        for _ in 0..<10 {
+            #expect(backoff.nextDelayNanoseconds(afterHealthyConnection: false, randomUnit: 1) <= RealtimeReconnectBackoff.maximumDelayNanoseconds)
+        }
+        #expect(backoff.nextDelayNanoseconds(afterHealthyConnection: true, randomUnit: 1) == 1_000_000_000)
+        #expect(backoff.consecutiveFailures == 1)
     }
 
     @Test func reportsRankingsAndPathToFirstStayBoundToTheSelectedSnapshot() {
@@ -306,7 +370,12 @@ struct LeaguePilotAITests {
         #expect(path?.rank == 2)
         #expect(path?.leaderGap == 10)
         #expect(path?.proposedRecommendationCount == 1)
+        #expect(path?.positiveImpactPoints == 1)
         #expect(PathToFirstSummary.make(snapshot: snapshot, rankings: [], recommendations: data.recommendations) == nil)
+
+        let missingImpact = TestFixtures.recommendation(id: "rec-no-impact", snapshotID: "snapshot-a", status: .proposed, impactPoints: nil)
+        let missingImpactPath = PathToFirstSummary.make(snapshot: snapshot, rankings: data.powerRankings, recommendations: [missingImpact])
+        #expect(missingImpactPath?.positiveImpactPoints == nil)
     }
 
     @Test func opponentRosterDataExcludesTheManagerTeam() {
@@ -324,6 +393,7 @@ private final class MockPocketBase: PocketBaseServicing {
     var reportRecords: [WeeklyReport] = []
     var jobsByConnection: [String: [AnalysisJob]] = [:]
     var authRefreshError: Error?
+    private(set) var authRefreshCount = 0
     var suspendFirstSnapshotRequest = false
     private var snapshotContinuation: CheckedContinuation<[LeagueSnapshotRecord], Error>?
     private var suspendedSnapshotResult: [LeagueSnapshotRecord] = []
@@ -331,6 +401,7 @@ private final class MockPocketBase: PocketBaseServicing {
 
     func authWithPassword(email: String, password: String) async throws -> PBAuthResponse { TestFixtures.auth }
     func authRefresh(token: String) async throws -> PBAuthResponse {
+        authRefreshCount += 1
         if let authRefreshError { throw authRefreshError }
         return TestFixtures.auth
     }
@@ -452,8 +523,8 @@ private enum TestFixtures {
         LeagueSnapshotRecord(id: id, workspace: "workspace-a", connection: connectionID, week: 3, payload: snapshotPayload(teamName: teamName), schemaVersion: schemaVersion, fetchedAt: "2026-08-28T12:00:00Z", expiresAt: expiresAt, created: nil)
     }
 
-    static func recommendation(id: String, snapshotID: String, status: RecommendationStatus = .proposed) -> Recommendation {
-        Recommendation(id: id, workspace: "workspace-a", snapshot: snapshotID, kind: "lineup", title: id, summary: "Summary", confidence: 90, impactPoints: 1, payload: nil, status: status, expiresAt: nil, reviewedAt: nil, created: nil, updated: nil)
+    static func recommendation(id: String, snapshotID: String, status: RecommendationStatus = .proposed, impactPoints: Double? = 1) -> Recommendation {
+        Recommendation(id: id, workspace: "workspace-a", snapshot: snapshotID, kind: "lineup", title: id, summary: "Summary", confidence: 90, impactPoints: impactPoints, payload: nil, status: status, expiresAt: nil, reviewedAt: nil, created: nil, updated: nil)
     }
 
     static func report(id: String, snapshotID: String, rankings: [PowerRanking]) -> WeeklyReport {

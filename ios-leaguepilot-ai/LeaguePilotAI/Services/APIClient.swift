@@ -20,7 +20,10 @@ struct LeaguePilotError: LocalizedError {
         )
     }
 
-    var isSessionExpired: Bool { status == 401 || status == 403 }
+    /// A 401 confirms the token is no longer valid. A 403 can instead be a collection or
+    /// subscription permission problem, so callers must not erase a valid session for it.
+    var isSessionExpired: Bool { status == 401 }
+    var isPermissionDenied: Bool { status == 403 }
 }
 
 /// Minimal JSON client for the cloudpod PocketBase server.

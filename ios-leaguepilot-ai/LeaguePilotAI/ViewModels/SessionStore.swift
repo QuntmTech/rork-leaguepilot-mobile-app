@@ -16,6 +16,8 @@ final class SessionStore {
     /// Increments only for owner-scoped PocketBase events that can change an authenticated screen.
     private(set) var realtimeRevision = 0
     private(set) var isReceivingRealtimeUpdates = false
+    /// A permission failure must remain visible without incorrectly discarding a valid session.
+    private(set) var realtimeErrorMessage: String?
     private var didRestore = false
     private var realtimeTask: Task<Void, Never>?
     private var realtimeGeneration = 0
@@ -174,7 +176,7 @@ final class SessionStore {
 
     func syncSelectedConnection() async throws -> SyncQueueResponse { guard let authToken, let connectionID = selectedConnectionID else { throw LeaguePilotError(status: nil, message: "Select an ESPN league first.") }; do { return try await leaguePilot.sync(connectionID: connectionID, token: authToken) } catch { handleAuthenticatedError(error); throw error } }
 
-    func signOut() { stopRealtime(); try? keychain.removeAll(); user = nil; workspace = nil; connections = []; setSelectedConnectionID(nil); authToken = nil; realtimeRevision = 0; phase = .signedOut }
+    func signOut() { stopRealtime(); try? keychain.removeAll(); user = nil; workspace = nil; connections = []; setSelectedConnectionID(nil); authToken = nil; realtimeRevision = 0; realtimeErrorMessage = nil; phase = .signedOut }
 
     private func apply(_ auth: PBAuthResponse) throws { try keychain.set(auth.token, for: .authToken); user = auth.record; authToken = auth.token }
     private func bootstrapAndLoad() async throws { guard let authToken else { throw LeaguePilotError(status: nil, message: "Your session has ended.") }; phase = .loadingWorkspace; let response = try await leaguePilot.bootstrap(token: authToken); workspace = response.workspace; phase = .loadingDashboard; try await refreshConnections(); phase = .ready; startRealtime() }
@@ -203,6 +205,7 @@ final class SessionStore {
         realtimeGeneration &+= 1
         let generation = realtimeGeneration
         isReceivingRealtimeUpdates = true
+        realtimeErrorMessage = nil
         let realtime = realtime
         realtimeTask = Task { [weak self, realtime] in
             do {
@@ -215,7 +218,9 @@ final class SessionStore {
                 // Session changes intentionally end the stream.
             } catch {
                 guard !Task.isCancelled, let self else { return }
-                self.handleAuthenticatedError(error)
+                self.finishRealtime(generation: generation)
+                await self.handleRealtimeFailure(error)
+                return
             }
             guard let self else { return }
             self.finishRealtime(generation: generation)
@@ -233,6 +238,32 @@ final class SessionStore {
         guard realtimeGeneration == generation else { return }
         realtimeTask = nil
         isReceivingRealtimeUpdates = false
+    }
+
+    private func handleRealtimeFailure(_ error: Error) async {
+        guard let realtimeError = error as? LeaguePilotError else {
+            realtimeErrorMessage = "Live updates are temporarily unavailable. Pull down to refresh saved league data."
+            return
+        }
+        if realtimeError.isSessionExpired {
+            signOut()
+            return
+        }
+        if realtimeError.isPermissionDenied {
+            guard let authToken else {
+                signOut()
+                return
+            }
+            do {
+                let refreshed = try await pocketBase.authRefresh(token: authToken)
+                try apply(refreshed)
+                realtimeErrorMessage = "Live updates are unavailable because this account does not have permission for the realtime subscription. Saved league data remains available."
+            } catch {
+                handle(error)
+            }
+            return
+        }
+        realtimeErrorMessage = FriendlyError.message(for: realtimeError)
     }
 
     private func receiveRealtime(_ event: PocketBaseRealtimeEvent) {

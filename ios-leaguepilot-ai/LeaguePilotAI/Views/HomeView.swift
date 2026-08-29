@@ -18,6 +18,7 @@ struct HomeView: View {
                     leagueCard
                     loadingState
                     dataWarnings
+                    realtimeNotice
                     jobCard
                     pathToFirst
                     recommendations
@@ -42,7 +43,7 @@ struct HomeView: View {
             Text("LEAGUEPILOT AI").font(.footnote.weight(.bold)).foregroundStyle(Theme.emerald).tracking(1)
             Text(session.workspaceName).font(.largeTitle.weight(.heavy)).foregroundStyle(Theme.ink)
             if let payload = viewModel.snapshot?.payload {
-                Text("Week \(payload.week) · \(payload.scoringFormat)")
+                Text("Week \(payload.week) · \(payload.scoringFormat ?? "Unavailable")")
                     .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
             }
@@ -76,6 +77,17 @@ struct HomeView: View {
             .padding(16)
             .leagueCard()
             .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder private var realtimeNotice: some View {
+        if let message = session.realtimeErrorMessage {
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(Theme.clay)
+                .padding(16)
+                .leagueCard()
+                .accessibilityElement(children: .combine)
         }
     }
 
@@ -159,9 +171,17 @@ struct HomeView: View {
                         .font(.subheadline)
                         .foregroundStyle(Theme.inkSecondary)
                 }
-                Text(summary.proposedRecommendationCount == 0 ? "No proposed moves are awaiting review." : "\(summary.proposedRecommendationCount) proposed move\(summary.proposedRecommendationCount == 1 ? "" : "s") list \(summary.positiveImpactPoints.formatted(.number.precision(.fractionLength(1)))) projected points of positive impact.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
+                Group {
+                    if summary.proposedRecommendationCount == 0 {
+                        Text("No proposed moves are awaiting review.")
+                    } else if let impact = summary.positiveImpactPoints {
+                        Text("\(summary.proposedRecommendationCount) proposed move\(summary.proposedRecommendationCount == 1 ? "" : "s") list \(impact.formatted(.number.precision(.fractionLength(1)))) projected points of positive impact.")
+                    } else {
+                        Text("\(summary.proposedRecommendationCount) proposed move\(summary.proposedRecommendationCount == 1 ? "" : "s") await review; projected impact is unavailable.")
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(Theme.inkSecondary)
             }
             .padding(16)
             .leagueCard()

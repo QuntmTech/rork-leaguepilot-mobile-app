@@ -72,13 +72,13 @@ struct LeagueIntelligenceView: View {
     private func snapshotSummary(_ snapshot: LeagueSnapshotRecord, payload: LeagueSnapshotPayload) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack { Text(payload.leagueName).font(.headline); Spacer(); Text("Week \(payload.week)").font(.caption.weight(.semibold)).foregroundStyle(Theme.emerald) }
-            Text("Season \(payload.season) · \(payload.scoringFormat)").font(.subheadline).foregroundStyle(Theme.inkSecondary)
+            Text("Season \(payload.season) · \(payload.scoringFormat ?? "Unavailable")").font(.subheadline).foregroundStyle(Theme.inkSecondary)
             Text("Synced \(RelativeTime.string(from: snapshot.fetchedAt))").font(.caption).foregroundStyle(Theme.inkSecondary)
             if let expiresAt = snapshot.expiresAt {
                 Text("Backend expiry \(RelativeTime.string(from: expiresAt))").font(.caption).foregroundStyle(Theme.inkSecondary)
             }
-            if !payload.dataQualityWarnings.isEmpty {
-                Text(payload.dataQualityWarnings.joined(separator: " · ")).font(.footnote).foregroundStyle(Theme.clay)
+            if let dataQualityWarnings = payload.dataQualityWarnings, !dataQualityWarnings.isEmpty {
+                Text(dataQualityWarnings.joined(separator: " · ")).font(.footnote).foregroundStyle(Theme.clay)
             }
         }
         .padding(16)
@@ -89,21 +89,17 @@ struct LeagueIntelligenceView: View {
     @ViewBuilder private func matchup(_ payload: LeagueSnapshotPayload) -> some View {
         if let mine = payload.myTeam,
            let matchup = payload.currentMatchup,
-           let opponent = payload.currentOpponent,
-           let myProjection = matchup.projectedTotal(for: mine.id),
-           let opponentProjection = matchup.projectedTotal(for: opponent.id) {
+           let opponent = payload.currentOpponent {
             VStack(alignment: .leading, spacing: 12) {
                 Text("This week’s matchup").font(.headline)
                 HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) { Text(mine.name).font(.subheadline.weight(.semibold)); Text("\(myProjection.formatted(.number.precision(.fractionLength(1)))) projected").font(.caption).foregroundStyle(Theme.inkSecondary) }
+                    VStack(alignment: .leading, spacing: 4) { Text(mine.name).font(.subheadline.weight(.semibold)); Text("\(matchup.projectedTotalLabel(for: mine.id)) projected").font(.caption).foregroundStyle(Theme.inkSecondary) }
                     Spacer()
                     Text("vs").font(.caption).foregroundStyle(Theme.inkSecondary)
                     Spacer()
-                    VStack(alignment: .trailing, spacing: 4) { Text(opponent.name).font(.subheadline.weight(.semibold)); Text("\(opponentProjection.formatted(.number.precision(.fractionLength(1)))) projected").font(.caption).foregroundStyle(Theme.inkSecondary) }
+                    VStack(alignment: .trailing, spacing: 4) { Text(opponent.name).font(.subheadline.weight(.semibold)); Text("\(matchup.projectedTotalLabel(for: opponent.id)) projected").font(.caption).foregroundStyle(Theme.inkSecondary) }
                 }
-                if let myScore = matchup.score(for: mine.id), let opponentScore = matchup.score(for: opponent.id), myScore > 0 || opponentScore > 0 {
-                    Text("Current score: \(myScore.formatted(.number.precision(.fractionLength(1)))) – \(opponentScore.formatted(.number.precision(.fractionLength(1))))").font(.footnote).foregroundStyle(Theme.inkSecondary)
-                }
+                Text("Current score: \(matchup.scoreLabel(for: mine.id)) – \(matchup.scoreLabel(for: opponent.id))").font(.footnote).foregroundStyle(Theme.inkSecondary)
             }
             .padding(16)
             .leagueCard()
@@ -140,7 +136,7 @@ struct LeagueIntelligenceView: View {
                     Text(team.name).font(.subheadline)
                     Spacer()
                     Text(team.record).font(.subheadline.weight(.semibold))
-                    Text(team.pointsFor.formatted(.number.precision(.fractionLength(1)))).font(.caption).foregroundStyle(Theme.inkSecondary).frame(width: 56, alignment: .trailing)
+                    Text(team.pointsForLabel).font(.caption).foregroundStyle(Theme.inkSecondary).frame(width: 80, alignment: .trailing)
                 }
             }
             Text("Record · points for").font(.caption2).foregroundStyle(Theme.inkSecondary)
@@ -157,7 +153,7 @@ struct LeagueIntelligenceView: View {
                     OpponentTeamDetailView(team: team)
                 } label: {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) { Text(team.name).font(.subheadline.weight(.semibold)); Text("\(team.record) · \(team.roster.count) rostered players").font(.caption).foregroundStyle(Theme.inkSecondary) }
+                        VStack(alignment: .leading, spacing: 3) { Text(team.name).font(.subheadline.weight(.semibold)); Text("\(team.record) · \(team.rosterCountLabel)").font(.caption).foregroundStyle(Theme.inkSecondary) }
                         Spacer()
                         Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(Theme.inkSecondary)
                     }
@@ -200,10 +196,19 @@ struct LeagueIntelligenceView: View {
     }
 
     private func standingsTeams(_ teams: [LeagueTeam]) -> [LeagueTeam] {
-        teams.sorted {
-            if $0.wins != $1.wins { return $0.wins > $1.wins }
-            if $0.losses != $1.losses { return $0.losses < $1.losses }
-            return $0.pointsFor > $1.pointsFor
+        guard teams.allSatisfy(\.hasCompleteStanding) else { return teams }
+        return teams.sorted {
+            guard let leftWins = $0.wins,
+                  let rightWins = $1.wins,
+                  let leftLosses = $0.losses,
+                  let rightLosses = $1.losses,
+                  let leftPoints = $0.pointsFor,
+                  let rightPoints = $1.pointsFor else {
+                return false
+            }
+            if leftWins != rightWins { return leftWins > rightWins }
+            if leftLosses != rightLosses { return leftLosses < rightLosses }
+            return leftPoints > rightPoints
         }
     }
 }
@@ -216,13 +221,20 @@ struct OpponentTeamDetailView: View {
             LazyVStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(team.name).font(.largeTitle.weight(.bold)).foregroundStyle(Theme.ink)
-                    Text("\(team.record) · \(team.pointsFor.formatted(.number.precision(.fractionLength(1)))) points for").font(.subheadline).foregroundStyle(Theme.inkSecondary)
-                    if !team.owner.isEmpty { Text(team.owner).font(.caption).foregroundStyle(Theme.inkSecondary) }
+                    Text("\(team.record) · \(team.pointsForLabel) points for").font(.subheadline).foregroundStyle(Theme.inkSecondary)
+                    if let owner = team.owner, !owner.isEmpty { Text(owner).font(.caption).foregroundStyle(Theme.inkSecondary) }
                 }
                 .padding(16)
                 .leagueCard()
-                rosterSection(title: "Starting lineup", players: team.starters)
-                rosterSection(title: "Bench and IR", players: team.bench)
+                if team.roster == nil {
+                    LPEmptyState(systemImage: "person.3", title: "Roster unavailable", message: "The backend did not provide a roster for this opponent.")
+                } else {
+                    rosterSection(title: "Starting lineup", players: team.starters)
+                    rosterSection(title: "Bench and IR", players: team.bench)
+                    if !team.playersWithUnavailableSlots.isEmpty {
+                        rosterSection(title: "Slot unavailable", players: team.playersWithUnavailableSlots)
+                    }
+                }
             }
             .padding(16)
         }
@@ -240,9 +252,9 @@ struct OpponentTeamDetailView: View {
                 ForEach(players.sorted { $0.position == $1.position ? $0.name < $1.name : $0.position < $1.position }) { player in
                     HStack(alignment: .firstTextBaseline) {
                         Text(player.position).font(.caption.weight(.bold)).foregroundStyle(Theme.emerald).frame(width: 28, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 2) { Text(player.name).font(.subheadline.weight(.semibold)); Text("\(player.proTeam)\(player.opponent.isEmpty ? "" : " · \(player.opponent)") · \(player.currentSlot)").font(.caption).foregroundStyle(Theme.inkSecondary) }
+                        VStack(alignment: .leading, spacing: 2) { Text(player.name).font(.subheadline.weight(.semibold)); Text(player.rosterMetadataLabel).font(.caption).foregroundStyle(Theme.inkSecondary) }
                         Spacer()
-                        if let projected = player.projectedPointsLabel { Text(projected).font(.caption.weight(.semibold)).foregroundStyle(Theme.inkSecondary) }
+                        Text(player.projectedPointsLabel).font(.caption.weight(.semibold)).foregroundStyle(Theme.inkSecondary)
                     }
                     .accessibilityElement(children: .combine)
                 }
