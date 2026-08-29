@@ -16,4 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build and test
-        run: xcodebuild -project LeaguePilotAI.xcodeproj -scheme LeaguePilotAI -destination 'platform=iOS Simulator,name=iPhone 16 Pro' clean test
+        run: |
+          available_devices="$(xcrun simctl list devices available)"
+          simulator_id="$(printf '%s\n' "$available_devices" | awk -F '[()]' '/^[[:space:]]+iPhone/ { print $2; exit }')"
+          if [ -z "$simulator_id" ]; then
+            simulator_id="$(printf '%s\n' "$available_devices" | awk -F '[()]' '/^[[:space:]]+.*\([0-9A-F-]+\)/ { print $2; exit }')"
+          fi
+          test -n "$simulator_id"
+          xcodebuild -project LeaguePilotAI.xcodeproj -scheme LeaguePilotAI -destination "platform=iOS Simulator,id=$simulator_id" clean test
