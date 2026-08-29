@@ -1,58 +1,54 @@
 import Foundation
 import Security
 
-/// Stores the PocketBase session token so the user stays signed in on this device.
-/// Values live in the Keychain only — never in UserDefaults, files, or logs.
-enum KeychainStore {
-    enum Key: String {
-        case authToken
-        case userID
-        case email
-    }
+protocol KeychainStoring {
+    func set(_ value: String, for key: KeychainStore.Key) throws
+    func string(for key: KeychainStore.Key) throws -> String?
+    func removeAll() throws
+}
 
-    private static let service = "com.leaguepilot.ai.session"
+enum KeychainStoreError: LocalizedError { case unavailable
+    var errorDescription: String? { "Secure storage is unavailable on this device." }
+}
 
-    /// Writes a value, replacing any existing one.
-    static func set(_ value: String, for key: Key) {
-        let baseQuery: [String: Any] = [
+struct KeychainStore: KeychainStoring {
+    enum Key: String { case authToken }
+    private let service = "com.leaguepilot.ai.session"
+
+    func set(_ value: String, for key: Key) throws {
+        try remove(key)
+        let status = SecItemAdd([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key.rawValue,
-        ]
-        SecItemDelete(baseQuery as CFDictionary)
-        var attributes = baseQuery
-        attributes[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(attributes as CFDictionary, nil)
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecValueData as String: Data(value.utf8),
+        ] as CFDictionary, nil)
+        guard status == errSecSuccess else { throw KeychainStoreError.unavailable }
     }
 
-    /// Reads a value, or nil when absent.
-    static func string(for key: Key) -> String? {
-        let query: [String: Any] = [
+    func string(for key: Key) throws -> String? {
+        var result: AnyObject?
+        let status = SecItemCopyMatching([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key.rawValue,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        ] as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { throw KeychainStoreError.unavailable }
         return String(data: data, encoding: .utf8)
     }
 
-    /// Removes every stored session value.
-    static func removeAll() {
-        for key in [Key.authToken, .userID, .email] {
-            remove(key)
-        }
-    }
+    func removeAll() throws { try remove(.authToken) }
 
-    static func remove(_ key: Key) {
-        let query: [String: Any] = [
+    private func remove(_ key: Key) throws {
+        let status = SecItemDelete([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key.rawValue,
-        ]
-        SecItemDelete(query as CFDictionary)
+        ] as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainStoreError.unavailable }
     }
 }

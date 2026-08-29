@@ -14,14 +14,14 @@ extension Color {
 
 /// App-wide palette: warm cream canvas, forest-green primaries, emerald/lime accents.
 enum Theme {
-    static let canvas = Color(hex: "FAF6EE")       // warm cream background
-    static let card = Color(hex: "FFFFFF")         // soft off-white cards
-    static let border = Color(hex: "E8DFCE")       // soft beige borders
-    static let forest = Color(hex: "1F4730")       // primary buttons + headers
-    static let forestPressed = Color(hex: "173423")
-    static let emerald = Color(hex: "2F9E6A")      // positive accents
-    static let lime = Color(hex: "C9E265")         // subtle highlights
-    static let ink = Color(hex: "16211A")          // near-black text
-    static let inkSecondary = Color(hex: "5C6B60") // secondary text
+    static let canvas = Color(hex: "F3EFE5")
+    static let card = Color(hex: "FFFDF8")
+    static let border = Color(hex: "D7D1C6")
+    static let forest = Color(hex: "1D5949")
+    static let forestPressed = Color(hex: "174638")
+    static let emerald = Color(hex: "2F7A63")
+    static let lime = Color(hex: "B8DC73")
+    static let ink = Color(hex: "17221F")
+    static let inkSecondary = Color(hex: "6E7772")
     static let clay = Color(hex: "C0532F")         // disconnected / danger
 }

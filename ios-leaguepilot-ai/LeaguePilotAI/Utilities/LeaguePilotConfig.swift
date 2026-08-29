@@ -1,17 +1,34 @@
 import Foundation
 
-/// App-level settings that are safe to keep in source (no secrets here).
+/// Public app configuration. The CloudPod origin is not a credential and can be overridden through
+/// the generated Info.plist `LEAGUEPILOT_CLOUDPOD_URL` build setting.
 enum LeaguePilotConfig {
-    /// PocketBase / cloudpod base URL — a public server address, not a secret.
-    nonisolated static var baseURL: URL {
-        let fromEnv = Config.allValues["EXPO_PUBLIC_CLOUDPOD_URL"] ?? ""
-        let raw = fromEnv.isEmpty ? "https://leaguepilot-ai.cloudpod.pro" : fromEnv
-        return URL(string: raw) ?? URL(string: "https://leaguepilot-ai.cloudpod.pro")!
+    static let fallbackCloudPodURL = URL(string: "https://leaguepilot-ai.cloudpod.pro")!
+    static let connectionsCollection = "espn_connections"
+    static let jobsCollection = "job_runs"
+    static let recommendationsCollection = "recommendations"
+    static let snapshotsCollection = "league_snapshots"
+    static let defaultSeason = "2026"
+
+    static var baseURL: URL {
+        baseURL(from: Bundle.main.object(forInfoDictionaryKey: "LEAGUEPILOT_CLOUDPOD_URL") as? String)
     }
 
-    /// PocketBase collections read on Home. Adjust here if your schema names differ.
-    static let jobsCollection = "analysis_jobs"
-    static let recommendationsCollection = "recommendations"
-
-    static let defaultSeason = "2026"
+    static func baseURL(from rawValue: String?) -> URL {
+        guard let rawValue,
+              !rawValue.isEmpty,
+              !rawValue.contains("$("),
+              let components = URLComponents(string: rawValue),
+              components.scheme == "https",
+              components.host != nil,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              (components.path.isEmpty || components.path == "/"),
+              let url = components.url else {
+            return fallbackCloudPodURL
+        }
+        return url
+    }
 }

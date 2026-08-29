@@ -1,47 +1,31 @@
 import Foundation
 
-/// LeaguePilot workspace endpoints served by the cloudpod PocketBase instance.
 @MainActor
-final class LeaguePilotService {
+protocol LeaguePilotServicing {
+    func bootstrap(token: String) async throws -> BootstrapResponse
+    func runAnalysis(workspaceID: String, connectionID: String, token: String) async throws -> AnalysisQueueResponse
+    func saveESPNConnection(workspaceID: String, connection: ESPNConnectionRequest, token: String) async throws -> ConnectionSaveResponse
+    func sync(connectionID: String, token: String) async throws -> SyncQueueResponse
+}
+
+@MainActor
+final class LeaguePilotService: LeaguePilotServicing {
     private let client: APIClient
+    init(client: APIClient? = nil) { self.client = client ?? APIClient(baseURL: LeaguePilotConfig.baseURL) }
 
-    init(client: APIClient? = nil) {
-        self.client = client ?? APIClient(baseURL: LeaguePilotConfig.baseURL)
+    func bootstrap(token: String) async throws -> BootstrapResponse {
+        try await client.send(BootstrapResponse.self, method: "POST", path: "/api/leaguepilot/bootstrap", body: Data("{}".utf8), token: token)
     }
 
-    private struct BootstrapEnvelope: Decodable {
-        let workspace: Workspace?
+    func runAnalysis(workspaceID: String, connectionID: String, token: String) async throws -> AnalysisQueueResponse {
+        try await client.send(AnalysisQueueResponse.self, method: "POST", path: "/api/leaguepilot/workspaces/\(workspaceID)/analysis", body: try JSONEncoder().encode(AnalysisRequest(connectionID: connectionID)), token: token)
     }
 
-    /// POST /api/leaguepilot/bootstrap — ensures a workspace exists and returns it.
-    func bootstrap(token: String) async throws -> Workspace {
-        let data = try await client.send("POST", "/api/leaguepilot/bootstrap", body: Data("{}".utf8), token: token)
-        if let envelope = try? JSONDecoder().decode(BootstrapEnvelope.self, from: data),
-           let workspace = envelope.workspace {
-            return workspace
-        }
-        return try JSONDecoder().decode(Workspace.self, from: data)
+    func saveESPNConnection(workspaceID: String, connection: ESPNConnectionRequest, token: String) async throws -> ConnectionSaveResponse {
+        try await client.send(ConnectionSaveResponse.self, method: "PUT", path: "/api/leaguepilot/workspaces/\(workspaceID)/connections/espn", body: try JSONEncoder().encode(connection), token: token)
     }
 
-    /// POST /api/leaguepilot/workspaces/{id}/analysis — queues a full analysis run.
-    func runAnalysis(workspaceID: String, token: String) async throws {
-        let body = try JSONEncoder().encode(AnalysisRequest())
-        _ = try await client.send(
-            "POST",
-            "/api/leaguepilot/workspaces/\(workspaceID)/analysis",
-            body: body,
-            token: token
-        )
-    }
-
-    /// PUT /api/leaguepilot/workspaces/{id}/connections/espn — links an ESPN league.
-    func saveESPNConnection(workspaceID: String, connection: ESPNConnectionRequest, token: String) async throws {
-        let body = try JSONEncoder().encode(connection)
-        _ = try await client.send(
-            "PUT",
-            "/api/leaguepilot/workspaces/\(workspaceID)/connections/espn",
-            body: body,
-            token: token
-        )
+    func sync(connectionID: String, token: String) async throws -> SyncQueueResponse {
+        try await client.send(SyncQueueResponse.self, method: "POST", path: "/api/leaguepilot/connections/\(connectionID)/sync", body: Data("{}".utf8), token: token)
     }
 }

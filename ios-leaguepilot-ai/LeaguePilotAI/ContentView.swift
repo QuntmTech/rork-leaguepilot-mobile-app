@@ -11,7 +11,8 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if session.isRestoringSession {
+            switch session.phase {
+            case .restoring, .loadingWorkspace, .loadingDashboard:
                 VStack(spacing: 12) {
                     Text("LEAGUEPILOT AI")
                         .font(.system(size: 24, weight: .heavy, design: .rounded))
@@ -20,16 +21,23 @@ struct ContentView: View {
                         .tint(Theme.forest)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if session.isSignedIn {
+            case .ready:
                 HomeView(session: session)
-            } else {
+            case .signedOut, .authenticating:
                 SignInView(session: session)
+            case let .failed(message):
+                VStack(spacing: 14) {
+                    Text("We couldn't load your league").font(.title3.weight(.bold)).foregroundStyle(Theme.ink)
+                    Text(message).font(.footnote).foregroundStyle(Theme.inkSecondary).multilineTextAlignment(.center)
+                    Button("Retry") { Task { await session.retry() } }.buttonStyle(PrimaryButtonStyle())
+                    Button("Sign Out") { session.signOut() }.buttonStyle(OutlineButtonStyle())
+                }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(Theme.canvas)
         .tint(Theme.forest)
         .preferredColorScheme(.light)
-        .animation(.easeInOut(duration: 0.2), value: session.isSignedIn)
+        .task { await session.restoreSession() }
     }
 }
 

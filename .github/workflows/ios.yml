@@ -1,0 +1,17 @@
+name: iOS
+
+on:
+  pull_request:
+    paths: ["ios-leaguepilot-ai/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: ios-leaguepilot-ai
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: xcodebuild -project LeaguePilotAI.xcodeproj -scheme LeaguePilotAI -destination 'platform=iOS Simulator,name=iPhone 16 Pro' clean test

@@ -39,6 +39,7 @@ struct ConnectESPNView: View {
                 dismiss()
             }
         }
+        .onDisappear { viewModel.clearSensitiveFields() }
     }
 
     private var titleBlock: some View {

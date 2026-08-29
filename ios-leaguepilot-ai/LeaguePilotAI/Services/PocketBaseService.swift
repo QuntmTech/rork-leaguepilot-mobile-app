@@ -1,94 +1,64 @@
 import Foundation
 
-/// PocketBase auth and record access for the `users` collection and Home reads.
 @MainActor
-final class PocketBaseService {
+protocol PocketBaseServicing {
+    func authWithPassword(email: String, password: String) async throws -> PBAuthResponse
+    func authRefresh(token: String) async throws -> PBAuthResponse
+    func createUser(name: String, email: String, password: String) async throws
+    func connections(workspaceID: String, token: String) async throws -> [ESPNConnection]
+    func jobs(workspaceID: String, connectionID: String, token: String) async throws -> [AnalysisJob]
+    func job(id: String, token: String) async throws -> AnalysisJob
+    func snapshots(workspaceID: String, token: String) async throws -> [LeagueSnapshotReference]
+    func recommendations(workspaceID: String, token: String) async throws -> [Recommendation]
+}
+
+@MainActor
+final class PocketBaseService: PocketBaseServicing {
     private let client: APIClient
+    init(client: APIClient? = nil) { self.client = client ?? APIClient(baseURL: LeaguePilotConfig.baseURL) }
 
-    init(client: APIClient? = nil) {
-        self.client = client ?? APIClient(baseURL: LeaguePilotConfig.baseURL)
-    }
-
-    /// Signs a user in against the PocketBase `users` collection.
     func authWithPassword(email: String, password: String) async throws -> PBAuthResponse {
-        struct Credentials: Encodable {
-            let identity: String
-            let password: String
-        }
-        let body = try JSONEncoder().encode(Credentials(identity: email, password: password))
-        return try await client.send(
-            PBAuthResponse.self,
-            method: "POST",
-            path: "/api/collections/users/auth-with-password",
-            body: body
-        )
+        struct Credentials: Encodable { let identity: String; let password: String }
+        return try await client.send(PBAuthResponse.self, method: "POST", path: "/api/collections/users/auth-with-password", body: try JSONEncoder().encode(Credentials(identity: email, password: password)))
     }
 
-    /// Validates a stored session token and returns a fresh one.
     func authRefresh(token: String) async throws -> PBAuthResponse {
-        try await client.send(
-            PBAuthResponse.self,
-            method: "POST",
-            path: "/api/collections/users/auth-refresh",
-            body: Data("{}".utf8),
-            token: token
-        )
+        try await client.send(PBAuthResponse.self, method: "POST", path: "/api/collections/users/auth-refresh", body: Data("{}".utf8), token: token)
     }
 
-    /// Creates a new user account.
     func createUser(name: String, email: String, password: String) async throws {
-        let payload = SignUpRequest(name: name, email: email, password: password, passwordConfirm: password)
-        let body = try JSONEncoder().encode(payload)
+        let body = try JSONEncoder().encode(SignUpRequest(name: name, email: email, password: password, passwordConfirm: password))
         _ = try await client.send("POST", "/api/collections/users/records", body: body)
     }
 
-    /// Newest analysis job for a workspace, or nil when none exist.
-    func latestJob(workspaceID: String, token: String) async throws -> AnalysisJob? {
-        let jobs: [AnalysisJob] = try await list(
-            collection: LeaguePilotConfig.jobsCollection,
-            workspaceID: workspaceID,
-            sort: "-created",
-            limit: 1,
-            token: token
-        )
-        return jobs.first
+    func connections(workspaceID: String, token: String) async throws -> [ESPNConnection] {
+        try await list(ESPNConnection.self, collection: LeaguePilotConfig.connectionsCollection, filter: "workspace = \(PBFilter.value(workspaceID))", sort: "-last_synced_at", token: token)
     }
 
-    /// Newest recommendations for a workspace.
-    func recommendations(workspaceID: String, token: String, limit: Int = 5) async throws -> [Recommendation] {
-        try await list(
-            collection: LeaguePilotConfig.recommendationsCollection,
-            workspaceID: workspaceID,
-            sort: "-created",
-            limit: limit,
-            token: token
-        )
+    func jobs(workspaceID: String, connectionID: String, token: String) async throws -> [AnalysisJob] {
+        try await list(AnalysisJob.self, collection: LeaguePilotConfig.jobsCollection, filter: "workspace = \(PBFilter.value(workspaceID)) && connection = \(PBFilter.value(connectionID))", sort: "-created", token: token, limit: 10)
     }
 
-    /// Lists records filtered by workspace. A missing collection reads as empty.
-    private func list<Item: Decodable>(
-        collection: String,
-        workspaceID: String,
-        sort: String,
-        limit: Int,
-        token: String
-    ) async throws -> [Item] {
-        let query = [
-            "filter": "workspace=\"\(workspaceID)\"",
-            "sort": sort,
-            "limit": String(limit),
-        ]
-        do {
-            let page: PBList<Item> = try await client.send(
-                PBList<Item>.self,
-                method: "GET",
-                path: "/api/collections/\(collection)/records",
-                query: query,
-                token: token
-            )
-            return page.items
-        } catch let error as LeaguePilotError where error.status == 404 {
-            return []
-        }
+    func job(id: String, token: String) async throws -> AnalysisJob {
+        try await client.send(AnalysisJob.self, method: "GET", path: "/api/collections/\(LeaguePilotConfig.jobsCollection)/records/\(id)", token: token)
+    }
+
+    func snapshots(workspaceID: String, token: String) async throws -> [LeagueSnapshotReference] {
+        try await list(LeagueSnapshotReference.self, collection: LeaguePilotConfig.snapshotsCollection, filter: "workspace = \(PBFilter.value(workspaceID))", sort: "-created", token: token, limit: 100)
+    }
+
+    func recommendations(workspaceID: String, token: String) async throws -> [Recommendation] {
+        try await list(Recommendation.self, collection: LeaguePilotConfig.recommendationsCollection, filter: "workspace = \(PBFilter.value(workspaceID))", sort: "-created", token: token, limit: 100)
+    }
+
+    private func list<T: Decodable>(_ type: T.Type, collection: String, filter: String, sort: String, token: String, limit: Int = 50) async throws -> [T] {
+        let page: PBList<T> = try await client.send(PBList<T>.self, method: "GET", path: "/api/collections/\(collection)/records", query: ["filter": filter, "sort": sort, "perPage": String(limit)], token: token)
+        return page.items
+    }
+}
+
+private enum PBFilter {
+    static func value(_ raw: String) -> String {
+        "\"\(raw.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
     }
 }

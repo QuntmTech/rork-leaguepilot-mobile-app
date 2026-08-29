@@ -11,12 +11,19 @@ struct LeaguePilotError: LocalizedError {
     static func from(data: Data, status: Int) -> LeaguePilotError {
         struct ServerError: Decodable { let message: String? }
         let serverMessage = (try? JSONDecoder().decode(ServerError.self, from: data))?.message
-        return LeaguePilotError(status: status, message: serverMessage ?? "Request failed (\(status)).")
+        let safeMessage = serverMessage?
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return LeaguePilotError(
+            status: status,
+            message: safeMessage?.isEmpty == false ? String(safeMessage!.prefix(500)) : "Request failed (\(status))."
+        )
     }
+
+    var isSessionExpired: Bool { status == 401 || status == 403 }
 }
 
 /// Minimal JSON client for the cloudpod PocketBase server.
-@MainActor
 final class APIClient {
     private let baseURL: URL
     private let session: URLSession
