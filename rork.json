@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "LeaguePilot AI",
+      "path": "ios-leaguepilot-ai",
+      "framework": "swift"
+    }
+  ],
+  "$schema": "https://rork.com/schema/rork.json"
+}
